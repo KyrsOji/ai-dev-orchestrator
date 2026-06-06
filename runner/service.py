@@ -36,6 +36,16 @@ KAFKA_BOOTSTRAP = os.environ.get("KAFKA_BOOTSTRAP", "kafka.yahlife.com:9095")
 KAFKA_CLIENT_CONFIG = os.environ.get("KAFKA_CLIENT_CONFIG")
 KAFKA_FORCE_CLI = os.environ.get("KAFKA_FORCE_CLI", "1")
 
+# Runner mode controls whether the service attempts execution
+# 'dry-run' (default) or 'execute'
+RUNNER_MODE = os.environ.get("RUNNER_MODE", "dry-run")
+# OpenHands adapter mode: the executor itself also checks this variable
+OPENHANDS_MODE = os.environ.get("OPENHANDS_MODE", "dry-run")
+try:
+    OPENHANDS_TIMEOUT_SECONDS = int(os.environ.get("OPENHANDS_TIMEOUT_SECONDS", "1800"))
+except Exception:
+    OPENHANDS_TIMEOUT_SECONDS = 1800
+
 # Logging path (repo-root/logs/ofbiz-runner.log)
 REPO_ROOT = os.path.dirname(os.path.dirname(__file__))
 LOG_DIR = os.path.join(REPO_ROOT, "logs")
@@ -165,6 +175,7 @@ def main() -> int:
     _setup_logging()
 
     logging.info("Starting OFBiz continuous runner service (dry-run only)")
+    logging.info("Starting OFBiz continuous runner service (RUNNER_MODE=%s OPENHANDS_MODE=%s)", RUNNER_MODE, OPENHANDS_MODE)
     logging.info("Task topic=%s Result topic=%s Consumer group=%s", TASK_TOPIC, RESULT_TOPIC, CONSUMER_GROUP)
 
     # Install signal handlers
@@ -200,6 +211,31 @@ def main() -> int:
                 # Step 2: Dry-run: do not invoke OpenHands; create placeholder dispatch (already handled by run_directory)
                 # Step 3: Build and publish result
                 result_msg = build_result_message(task, run_dir, status="dry_run_completed")
+                # Step 2: Execute or dry-run via OpenHands adapter
+                # Configure mode and timeout via environment variables
+                execution_mode = RUNNER_MODE
+                try:
+                    timeout_seconds = int(os.environ.get("OPENHANDS_TIMEOUT_SECONDS", str(OPENHANDS_TIMEOUT_SECONDS)))
+                except Exception:
+                    timeout_seconds = OPENHANDS_TIMEOUT_SECONDS
+
+                if execution_mode == "execute":
+                    logging.info("OpenHands execution mode: execute (timeout=%s seconds)", timeout_seconds)
+                    exec_meta = openhands_executor.execute_task(task, run_dir, timeout_seconds=timeout_seconds)
+                    # Map executor status to result status
+                    exec_status = exec_meta.get("status")
+                    if exec_status == "executed":
+                        status = "executed"
+                    elif exec_status in ("failed", "error", "timeout"):
+                        status = "failed"
+                    else:
+                        status = exec_status or "failed"
+                    summary = exec_meta.get("summary", "")
+                    exec_duration = exec_meta.get("executionDurationSeconds")
+                    result_msg = build_result_message(task, run_dir, status=status, summary=summary, execution_duration_seconds=exec_duration)
+                else:
+                    logging.info("OpenHands execution mode: dry-run; skipping execution")
+                    result_msg = build_result_message(task, run_dir, status="dry_run_completed")
 
                 success, pub_meta = result_publisher.publish_result(result_msg, topic=RESULT_TOPIC)
                 if success:

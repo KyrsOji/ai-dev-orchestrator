@@ -1,27 +1,29 @@
 [Unit]
-Description=ai-dev-runner (OFBiz) - continuous dry-run service
+Description=ai-dev-runner (OFBiz) - template service file
 After=network.target
 
 [Service]
 Type=simple
-User=kojiyah
-WorkingDirectory=/home/kojiyah/dev/ai-dev-orchestrator
+# Replace <USER> with the system user to run the service
+User=<USER>
+WorkingDirectory=/home/<USER>/dev/ai-dev-orchestrator
 Environment=KAFKA_BOOTSTRAP=kafka.yahlife.com:9095
-Environment=KAFKA_CLIENT_CONFIG=/opt/ai-dev-runner/certs/kafka-client.properties
+# Optionally set KAFKA_CLIENT_CONFIG to point to client properties file
+# Environment=KAFKA_CLIENT_CONFIG=/path/to/kafka-client.properties
+# Use the CLI preference for now
 Environment=KAFKA_FORCE_CLI=1
 # Runner mode: 'dry-run' (default) or 'execute'
 Environment=RUNNER_MODE=dry-run
 # Executor-level OpenHands mode (keeps OpenHands disabled by default)
 Environment=OPENHANDS_MODE=dry-run
-# Example settings to enable execution (edit unit or use a drop-in file):
+# To enable execution later, uncomment/add the following lines in the unit or a drop-in:
 # Environment=RUNNER_MODE=execute
 # Environment=OPENHANDS_MODE=execute
 # Environment=OPENHANDS_CMD=python3 -m openhands
 # Environment=OPENHANDS_ARGS=--some-arg
 # Environment=OPENHANDS_TIMEOUT_SECONDS=1800
-ExecStart=/usr/bin/env python3 -m runner.service
+ExecStart=/usr/bin/env bash -lc 'python3 -m runner.main --once --dry-run --from-beginning'
 Restart=on-failure
-RestartSec=10
 
 [Install]
 WantedBy=multi-user.target
