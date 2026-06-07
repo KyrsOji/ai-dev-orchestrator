@@ -15,6 +15,8 @@ import os
 from dataclasses import dataclass, asdict
 from typing import Any, Dict, List, Optional
 
+from matrix_bridge.kafka_client import KafkaClient
+
 logger = logging.getLogger(__name__)
 logging.basicConfig(format="%(asctime)s %(levelname)s %(message)s", level=logging.INFO)
 
@@ -50,14 +52,17 @@ class KafkaMock:
 class MatrixBridge:
     """Bridge logic (mocked) for approval requests and responses."""
 
-    def __init__(self, config: Optional[Dict[str, Any]] = None, dry_run: bool = True) -> None:
+    def __init__(self, config: Optional[Dict[str, Any]] = None, dry_run: bool = True, kafka_client: Optional[KafkaClient] = None) -> None:
         self.config = config or {}
         self.dry_run = dry_run
         self.matrix_room = self.config.get("matrix_room", "!approvals:example")
         self.kafka_consume_topic = self.config.get("kafka_consume_topic", "ai.dev.approval.request")
         self.kafka_publish_topic = self.config.get("kafka_publish_topic", "ai.dev.approval.response")
         self.matrix = MatrixMock(room=self.matrix_room)
-        self.kafka = KafkaMock()
+        if kafka_client is not None:
+            self.kafka = kafka_client
+        else:
+            self.kafka = KafkaClient(dry_run=dry_run)
 
     def post_task_summary(self, task: Dict[str, Any]) -> None:
         summary = f"Task {task.get('taskId')} - {task.get('title', '')}"
@@ -169,12 +174,39 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("--dry-run", action="store_true", help="Run in dry-run/mock mode (default behavior)")
     parser.add_argument("--sample-task-file", help="Path to a JSON file containing a single approval request task")
     parser.add_argument("--mock-commands-file", help="Path to a file containing newline-separated mock Matrix commands")
+    parser.add_argument("--consume-topic", help="Consume a single message from a Kafka topic and process it")
+    parser.add_argument("--timeout", type=int, default=10, help="Timeout seconds for Kafka consume")
 
     args = parser.parse_args(argv)
     cfg = load_config(args.config)
+
+    if args.sample_task_file and args.consume_topic:
+        parser.error("Specify only one of --sample-task-file or --consume-topic")
+
+    # If consuming from Kafka
+    if args.consume_topic:
+        kafka = KafkaClient(dry_run=args.dry_run)
+        msg, meta = kafka.consume_one(topic=args.consume_topic, timeout_s=args.timeout, from_beginning=True)
+        if msg is None:
+            print(json.dumps({"error": "no_message", "meta": meta}))
+            return 2
+        bridge = MatrixBridge(cfg, dry_run=args.dry_run, kafka_client=kafka)
+
+        mock_cmds = None
+        if args.mock_commands_file:
+            try:
+                with open(args.mock_commands_file, "r", encoding="utf-8") as fh:
+                    mock_cmds = [ln.strip() for ln in fh if ln.strip()]
+            except FileNotFoundError:
+                mock_cmds = None
+
+        resp = bridge.process_approval_request(msg, mock_commands=mock_cmds)
+        print(f"[BRIDGE] processed task={msg.get('taskId')} decision={resp.decision}")
+        return 0
+
+    # Process a local sample file (previous behavior)
     bridge = MatrixBridge(cfg, dry_run=args.dry_run)
 
-    # load sample task
     if not args.sample_task_file:
         logger.error("No --sample-task-file provided; nothing to do in smoke mode")
         return 2
