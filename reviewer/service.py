@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 from dataclasses import dataclass, asdict
 from typing import Any, Dict, Optional
 
@@ -28,20 +29,19 @@ class ReviewResult:
     details: Optional[Dict[str, Any]] = None
 
 
-class KafkaMock:
-    def publish(self, topic: str, message: Dict[str, Any]) -> None:
-        payload = json.dumps(message, ensure_ascii=False)
-        print(f"[KAFKA-PUBLISH] topic={topic} message={payload}")
-
+from reviewer.kafka_client import KafkaClient
 
 class Reviewer:
     """Deterministic rule-based reviewer."""
 
-    def __init__(self, dry_run: bool = True) -> None:
+    def __init__(self, dry_run: bool = True, kafka_client: Optional[KafkaClient] = None) -> None:
         self.dry_run = dry_run
-        self.kafka = KafkaMock()
-        self.approval_topic = "ai.dev.approval.request"
-        self.task_topic = "ai.dev.task.ofbiz"
+        if kafka_client is not None:
+            self.kafka = kafka_client
+        else:
+            self.kafka = KafkaClient(dry_run=dry_run)
+        self.approval_topic = os.environ.get("APPROVAL_TOPIC", "ai.dev.approval.request")
+        self.task_topic = os.environ.get("TASK_TOPIC", "ai.dev.task.ofbiz")
 
     def classify(self, result: Dict[str, Any]) -> ReviewResult:
         task_id = result.get("taskId") or result.get("id") or "unknown"
@@ -119,18 +119,38 @@ class Reviewer:
 
 
 def main(argv: Optional[list] = None) -> int:
-    parser = argparse.ArgumentParser(prog="reviewer-service", description="Dry-run reviewer service CLI")
-    parser.add_argument("--sample-result-file", help="JSON file containing a single runner result", required=True)
+    parser = argparse.ArgumentParser(prog="reviewer-service", description="Reviewer service CLI")
+    parser.add_argument("--sample-result-file", help="JSON file containing a single runner result")
+    parser.add_argument("--consume-topic", help="Consume a single message from a Kafka topic and process it")
+    parser.add_argument("--timeout", type=int, default=10, help="Timeout seconds for Kafka consume")
     parser.add_argument("--dry-run", action="store_true", help="Run in dry-run/mock mode (default)")
     args = parser.parse_args(argv)
 
-    with open(args.sample_result_file, "r", encoding="utf-8") as fh:
-        result = json.load(fh)
+    if args.sample_result_file and args.consume_topic:
+        parser.error("Specify only one of --sample-result-file or --consume-topic")
 
-    rev = Reviewer(dry_run=args.dry_run)
-    review = rev.handle(result)
-    print(json.dumps({"taskId": review.taskId, "classification": review.classification, "reason": review.reason}))
-    return 0
+    # Process a local sample file
+    if args.sample_result_file:
+        with open(args.sample_result_file, "r", encoding="utf-8") as fh:
+            result = json.load(fh)
+        rev = Reviewer(dry_run=args.dry_run)
+        review = rev.handle(result)
+        print(json.dumps({"taskId": review.taskId, "classification": review.classification, "reason": review.reason}))
+        return 0
+
+    # Consume one message from Kafka and handle it
+    if args.consume_topic:
+        kafka = KafkaClient(dry_run=args.dry_run)
+        msg, meta = kafka.consume_one(topic=args.consume_topic, timeout_s=args.timeout, from_beginning=True)
+        if msg is None:
+            print(json.dumps({"error": "no_message", "meta": meta}))
+            return 2
+        rev = Reviewer(dry_run=args.dry_run, kafka_client=kafka)
+        review = rev.handle(msg)
+        print(json.dumps({"taskId": review.taskId, "classification": review.classification, "reason": review.reason}))
+        return 0
+
+    parser.error("Specify one of --sample-result-file or --consume-topic")
 
 
 if __name__ == "__main__":
