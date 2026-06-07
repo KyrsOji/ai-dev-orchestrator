@@ -49,16 +49,54 @@ class KafkaMock:
         print(f"[KAFKA-PUBLISH] topic={topic} message={payload}")
 
 
+# Real Matrix integration
+try:
+    from matrix_bridge.matrix_client import MatrixClient
+except Exception:
+    MatrixClient = None  # type: ignore
+
+
 class MatrixBridge:
-    """Bridge logic (mocked) for approval requests and responses."""
+    """Bridge logic for approval requests and responses. Supports mock and real Matrix clients."""
 
     def __init__(self, config: Optional[Dict[str, Any]] = None, dry_run: bool = True, kafka_client: Optional[KafkaClient] = None) -> None:
         self.config = config or {}
         self.dry_run = dry_run
-        self.matrix_room = self.config.get("matrix_room", "!approvals:example")
+        # Topics - do NOT change defaults (must match orchestrator mappings)
         self.kafka_consume_topic = self.config.get("kafka_consume_topic", "ai.dev.approval.required")
         self.kafka_publish_topic = self.config.get("kafka_publish_topic", "ai.dev.review.out")
-        self.matrix = MatrixMock(room=self.matrix_room)
+
+        # Matrix config can be provided in config file or via environment
+        env_mode = os.environ.get("MATRIX_MODE")
+        cfg_mode = self.config.get("matrix_mode")
+        self.matrix_mode = (env_mode or cfg_mode or "mock").lower()
+
+        self.matrix_room = self.config.get("matrix_room") or os.environ.get("MATRIX_ROOM_ID") or "!approvals:example"
+
+        # Initialize Matrix client depending on mode
+        if self.matrix_mode == "real":
+            homeserver = self.config.get("matrix_homeserver") or os.environ.get("MATRIX_HOMESERVER_URL")
+            token = self.config.get("matrix_access_token") or os.environ.get("MATRIX_ACCESS_TOKEN")
+            if not homeserver or not token or not self.matrix_room:
+                # Fail-closed: required configuration missing for real mode
+                raise RuntimeError("MATRIX_MODE=real requires MATRIX_HOMESERVER_URL, MATRIX_ACCESS_TOKEN and MATRIX_ROOM_ID to be set")
+            if MatrixClient is None:
+                raise RuntimeError("MatrixClient implementation not available; install dependencies or enable matrix_bridge.matrix_client")
+            # Create Matrix client (do not log the token)
+            self.matrix = MatrixClient(homeserver, token, self.matrix_room)
+            # Try to determine our own user id for message filtering
+            try:
+                self._bot_user = self.matrix.whoami()
+                logger.info("MatrixBridge running in real mode for room=%s", self.matrix_room)
+            except Exception:
+                self._bot_user = None
+        else:
+            # Mock mode
+            self.matrix = MatrixMock(room=self.matrix_room)
+            self._bot_user = None
+            logger.info("MatrixBridge running in mock mode for room=%s", self.matrix_room)
+
+        # Kafka client
         if kafka_client is not None:
             self.kafka = kafka_client
         else:
@@ -66,6 +104,8 @@ class MatrixBridge:
 
     def post_task_summary(self, task: Dict[str, Any]) -> None:
         summary = f"Task {task.get('taskId')} - {task.get('title', '')}"
+        # Log a short summary, do not print secrets
+        logger.info("Posting task summary for task=%s to matrix room=%s", task.get("taskId"), self.matrix_room)
         self.matrix.post_message(summary)
 
     def post_approval_request(self, task: Dict[str, Any]) -> None:
@@ -73,6 +113,7 @@ class MatrixBridge:
             f"Approval request for task {task.get('taskId')}: {task.get('title', '')} "
             f"metadata={task.get('metadata', {})}"
         )
+        logger.info("Posting approval request task=%s to matrix room=%s", task.get("taskId"), self.matrix_room)
         self.matrix.post_message(body)
 
     def evaluate_policy(self, task: Dict[str, Any]) -> ApprovalResponse:
@@ -106,9 +147,10 @@ class MatrixBridge:
             "reason": resp.reason,
             "approver": resp.approver,
         }
+        logger.info("Publishing decision for task=%s decision=%s", resp.taskId, resp.decision)
         self.kafka.publish(self.kafka_publish_topic, payload)
 
-    def handle_command(self, cmd: str, task_id: Optional[str] = None) -> Optional[ApprovalResponse]:
+    def handle_command(self, cmd: str, task_id: Optional[str] = None, sender: Optional[str] = None) -> Optional[ApprovalResponse]:
         parts = cmd.strip().split()
         if not parts:
             return None
@@ -118,23 +160,47 @@ class MatrixBridge:
             if task_id and target != task_id:
                 return None
             if verb == "approve":
-                resp = ApprovalResponse(taskId=target, decision="approved", approver="matrix-user")
+                resp = ApprovalResponse(taskId=target, decision="approved", approver=sender or "matrix-user")
                 self.publish_response(resp)
                 return resp
             if verb == "deny":
-                resp = ApprovalResponse(taskId=target, decision="denied", approver="matrix-user")
+                resp = ApprovalResponse(taskId=target, decision="denied", approver=sender or "matrix-user")
                 self.publish_response(resp)
                 return resp
             if verb == "status":
+                # For real mode, we post a status message back to the room
                 self.matrix.post_message(f"Status for {target}: pending")
                 return None
         if verb in ("auto-approve", "require-approval") and len(parts) >= 2:
             policy = parts[1].lower()
-            self.matrix.post_message(f"Policy change request (mock): {verb} {policy}")
+            self.matrix.post_message(f"Policy change request: {verb} {policy}")
             return None
         return None
 
-    def process_approval_request(self, task: Dict[str, Any], mock_commands: Optional[List[str]] = None) -> ApprovalResponse:
+    def _process_incoming_matrix_messages(self, msgs: List[Dict[str, Any]], task_id: Optional[str] = None) -> Optional[ApprovalResponse]:
+        # Iterate messages and handle commands. Ignore messages sent by the bot itself.
+        for m in msgs:
+            sender = m.get("sender")
+            body = m.get("body", "")
+            # Ignore empty
+            if not body:
+                continue
+            if self._bot_user and sender == self._bot_user:
+                # ignore our own messages
+                continue
+            try:
+                res = self.handle_command(body, task_id=task_id, sender=sender)
+                if isinstance(res, ApprovalResponse):
+                    logger.info("Processed command from %s for task=%s decision=%s", sender, res.taskId, res.decision)
+                    return res
+            except Exception:
+                logger.exception("Failed to handle matrix command")
+        return None
+
+    def process_approval_request(self, task: Dict[str, Any], mock_commands: Optional[List[str]] = None, wait_seconds: int = 30) -> ApprovalResponse:
+        """Process a single approval request. In real mode this will post to Matrix and
+        poll for a command for up to wait_seconds before returning a pending decision.
+        """
         self.post_task_summary(task)
         evaluated = self.evaluate_policy(task)
         if evaluated.decision == "approved":
@@ -146,11 +212,31 @@ class MatrixBridge:
 
         # pending
         self.post_approval_request(task)
+
+        # If mock commands are supplied (mock mode), process them immediately
         if mock_commands:
             for c in mock_commands:
                 res = self.handle_command(c, task_id=task.get("taskId"))
                 if isinstance(res, ApprovalResponse):
                     return res
+            return evaluated
+
+        # If running in real mode, poll Matrix for commands for wait_seconds
+        if self.matrix_mode == "real":
+            start = time.time()
+            deadline = start + max(0, int(wait_seconds))
+            while time.time() < deadline:
+                msgs, meta = self.matrix.poll_commands(timeout_s=2)
+                if msgs:
+                    res = self._process_incoming_matrix_messages(msgs, task_id=task.get("taskId"))
+                    if res:
+                        return res
+                # small sleep to avoid busy loop
+                time.sleep(1)
+            # timeout - return pending
+            return evaluated
+
+        # default (mock) returns evaluated pending
         return evaluated
 
 
@@ -169,19 +255,25 @@ def load_config(path: Optional[str]) -> Dict[str, Any]:
 
 
 def main(argv: Optional[List[str]] = None) -> int:
-    parser = argparse.ArgumentParser(prog="matrix-approval-bridge", description="Mock Matrix approval bridge CLI (dry-run)")
+    parser = argparse.ArgumentParser(prog="matrix-approval-bridge", description="Matrix approval bridge CLI")
     parser.add_argument("--config", help="Path to YAML config (optional)")
     parser.add_argument("--dry-run", action="store_true", help="Run in dry-run/mock mode (default behavior)")
+    parser.add_argument("--matrix-mode", choices=("mock", "real"), help="Override matrix mode (mock or real)")
     parser.add_argument("--sample-task-file", help="Path to a JSON file containing a single approval request task")
     parser.add_argument("--mock-commands-file", help="Path to a file containing newline-separated mock Matrix commands")
     parser.add_argument("--consume-topic", help="Consume a single message from a Kafka topic and process it")
     parser.add_argument("--timeout", type=int, default=10, help="Timeout seconds for Kafka consume")
+    parser.add_argument("--wait-seconds", type=int, default=30, help="Seconds to wait for a Matrix command in real mode")
 
     args = parser.parse_args(argv)
     cfg = load_config(args.config)
 
     if args.sample_task_file and args.consume_topic:
         parser.error("Specify only one of --sample-task-file or --consume-topic")
+
+    # Respect CLI override for matrix mode
+    if args.matrix_mode:
+        cfg["matrix_mode"] = args.matrix_mode
 
     # If consuming from Kafka
     if args.consume_topic:
@@ -200,7 +292,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             except FileNotFoundError:
                 mock_cmds = None
 
-        resp = bridge.process_approval_request(msg, mock_commands=mock_cmds)
+        resp = bridge.process_approval_request(msg, mock_commands=mock_cmds, wait_seconds=args.wait_seconds)
         print(f"[BRIDGE] processed task={msg.get('taskId')} decision={resp.decision}")
         return 0
 
@@ -221,7 +313,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         except FileNotFoundError:
             mock_cmds = None
 
-    resp = bridge.process_approval_request(task, mock_commands=mock_cmds)
+    resp = bridge.process_approval_request(task, mock_commands=mock_cmds, wait_seconds=args.wait_seconds)
     # Print a short summary to stdout for smoke scripts to inspect
     print(f"[BRIDGE] processed task={task.get('taskId')} decision={resp.decision}")
     return 0

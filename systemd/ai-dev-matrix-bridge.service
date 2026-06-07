@@ -1,0 +1,26 @@
+[Unit]
+Description=AI Dev Matrix Approval Bridge (real)
+After=network.target
+
+[Service]
+Type=simple
+User=openhands-runner
+WorkingDirectory=/opt/ai-dev-orchestrator
+# Point to a YAML config file if you use one
+Environment=CONFIG_PATH=/etc/ai-dev-orchestrator/matrix-approval.yaml
+# Set MATRIX_MODE=real when running against a real homeserver. Credentials must
+# be supplied via EnvironmentFile or systemd drop-in; do NOT embed secrets in
+# the unit file directly.
+Environment=MATRIX_MODE=real
+# MATRIX_HOMESERVER_URL, MATRIX_ACCESS_TOKEN and MATRIX_ROOM_ID must be provided
+# e.g. via EnvironmentFile=/etc/ai-dev-orchestrator/matrix.env
+# ExecStart runs without --dry-run so it will connect to Matrix when configured
+ExecStart=/usr/bin/python3 -m matrix_bridge.bridge --config ${CONFIG_PATH} --matrix-mode real
+Restart=on-failure
+ProtectHome=true
+ProtectSystem=full
+PrivateTmp=true
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target
