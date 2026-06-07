@@ -1,0 +1,20 @@
+[Unit]
+Description=AI Dev Matrix Approval Bridge (mock / dry-run)
+After=network.target
+
+[Service]
+Type=simple
+User=openhands-runner
+WorkingDirectory=/opt/ai-dev-orchestrator
+Environment=CONFIG_PATH=/etc/ai-dev-orchestrator/matrix-approval.yaml
+# Dry-run default: do not connect to Matrix
+Environment=BRIDGE_MODE=dry-run
+ExecStart=/usr/bin/python3 -m matrix_bridge.bridge --config ${CONFIG_PATH} --dry-run
+Restart=on-failure
+ProtectHome=true
+ProtectSystem=full
+PrivateTmp=true
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

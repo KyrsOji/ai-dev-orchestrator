@@ -1,0 +1,20 @@
+# Matrix approval bridge configuration template
+# Fill in values for your Matrix homeserver and Kafka cluster.
+
+# Matrix (mock/dry-run by default)
+matrix:
+  homeserver: "https://matrix.example.org"
+  user: "@bot:example.org"
+  password: "REPLACE_ME"
+  room: "!approvals:example.org"
+
+# Kafka
+kafka:
+  bootstrap_servers: ["kafka.example.org:9092"]
+  consume_topic: "ai.dev.approval.request"
+  publish_topic: "ai.dev.approval.response"
+
+# Bridge behaviour
+bridge:
+  dry_run: true
+  mock_mode: true  # When true, Matrix and Kafka interactions are mocked (printed to stdout)
