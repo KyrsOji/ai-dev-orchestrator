@@ -9,6 +9,7 @@ WorkingDirectory=/home/kojiyah/dev/ai-dev-orchestrator
 Environment=KAFKA_BOOTSTRAP=kafka.yahlife.com:9095
 Environment=KAFKA_CLIENT_CONFIG=/opt/ai-dev-runner/certs/kafka-client.properties
 Environment=KAFKA_FORCE_CLI=1
+Environment=PATH=/home/kojiyah/tools/kafka/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 # Runner mode: 'dry-run' (default) or 'execute'
 Environment=RUNNER_MODE=dry-run
 # Executor-level OpenHands mode (keeps OpenHands disabled by default)
