@@ -94,7 +94,7 @@ class KafkaClient:
             logger.exception("kafka publish failed")
             return False, {"topic": topic, "error": str(exc), "errorType": type(exc).__name__}
 
-    def consume_one(self, topic: str = "ai.dev.approval.request", timeout_s: int = 10, from_beginning: bool = False) -> Tuple[Optional[Dict[str, Any]], Dict[str, Any]]:
+    def consume_one(self, topic: str = "ai.dev.approval.required", timeout_s: int = 10, from_beginning: bool = False) -> Tuple[Optional[Dict[str, Any]], Dict[str, Any]]:
         if self.consumer_cli:
             cmd = [self.consumer_cli, "--bootstrap-server", self.bootstrap, "--topic", topic, "--max-messages", "1", "--timeout-ms", str(timeout_s * 1000)]
             if from_beginning:

@@ -4,7 +4,7 @@
 This module classifies runner results and decides next actions:
 - classification categories: completed, failed, needs_more_info, unsafe,
   ready_to_commit, ready_to_push, requires_human_approval
-- It publishes mock Kafka messages to ai.dev.task.ofbiz and ai.dev.approval.request
+- It publishes mock Kafka messages to ai.dev.task.ofbiz and ai.dev.approval.required; it can also consume approval responses from ai.dev.review.out
 
 This is intentionally deterministic and does not call external services.
 """
@@ -40,8 +40,9 @@ class Reviewer:
             self.kafka = kafka_client
         else:
             self.kafka = KafkaClient(dry_run=dry_run)
-        self.approval_topic = os.environ.get("APPROVAL_TOPIC", "ai.dev.approval.request")
+        self.approval_topic = os.environ.get("APPROVAL_TOPIC", "ai.dev.approval.required")
         self.task_topic = os.environ.get("TASK_TOPIC", "ai.dev.task.ofbiz")
+        self.review_topic = os.environ.get("REVIEW_TOPIC", "ai.dev.review.out")
 
     def classify(self, result: Dict[str, Any]) -> ReviewResult:
         task_id = result.get("taskId") or result.get("id") or "unknown"
@@ -117,17 +118,56 @@ class Reviewer:
         # For completed/failed/needs_more_info we do not publish additional tasks here
         return review
 
+    def handle_review_response(self, resp: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Process an approval response message from the review topic.
+        If approved and the policy or reason indicates commit/push, publish a follow-up ai.dev.task.ofbiz task.
+        Returns a dict describing what (if anything) was published.
+        """
+        task_id = resp.get("taskId")
+        decision = (resp.get("decision") or "").lower()
+        policy = (resp.get("policy") or "").lower()
+        reason = resp.get("reason")
+
+        if decision == "approved":
+            action = None
+            if policy in ("commit", "push"):
+                action = "commit" if policy == "commit" else "push"
+            elif isinstance(reason, str):
+                r = reason.lower()
+                if "push" in r:
+                    action = "push"
+                elif "commit" in r:
+                    action = "commit"
+
+            if action:
+                payload = {
+                    "taskId": task_id,
+                    "action": action,
+                    "details": {"policy": policy, "reason": reason},
+                }
+                self.kafka.publish(self.task_topic, payload)
+                return {"taskId": task_id, "published": True, "action": action}
+
+            return {"taskId": task_id, "published": False, "action": None}
+
+        # For denied or pending decisions, do not publish follow-ups here
+        return {"taskId": task_id, "published": False, "decision": decision}
+
+
+
 
 def main(argv: Optional[list] = None) -> int:
     parser = argparse.ArgumentParser(prog="reviewer-service", description="Reviewer service CLI")
     parser.add_argument("--sample-result-file", help="JSON file containing a single runner result")
     parser.add_argument("--consume-topic", help="Consume a single message from a Kafka topic and process it")
+    parser.add_argument("--consume-review-topic", help="Consume a single approval response from the review topic and process it")
     parser.add_argument("--timeout", type=int, default=10, help="Timeout seconds for Kafka consume")
     parser.add_argument("--dry-run", action="store_true", help="Run in dry-run/mock mode (default)")
     args = parser.parse_args(argv)
 
-    if args.sample_result_file and args.consume_topic:
-        parser.error("Specify only one of --sample-result-file or --consume-topic")
+    if args.sample_result_file and (args.consume_topic or args.consume_review_topic):
+        parser.error("Specify only one of --sample-result-file, --consume-topic or --consume-review-topic")
 
     # Process a local sample file
     if args.sample_result_file:
@@ -138,7 +178,7 @@ def main(argv: Optional[list] = None) -> int:
         print(json.dumps({"taskId": review.taskId, "classification": review.classification, "reason": review.reason}))
         return 0
 
-    # Consume one message from Kafka and handle it
+    # Consume one message from Kafka and handle it (runner result)
     if args.consume_topic:
         kafka = KafkaClient(dry_run=args.dry_run)
         msg, meta = kafka.consume_one(topic=args.consume_topic, timeout_s=args.timeout, from_beginning=True)
@@ -150,7 +190,19 @@ def main(argv: Optional[list] = None) -> int:
         print(json.dumps({"taskId": review.taskId, "classification": review.classification, "reason": review.reason}))
         return 0
 
-    parser.error("Specify one of --sample-result-file or --consume-topic")
+    # Consume one approval response from the review topic and process it
+    if args.consume_review_topic:
+        kafka = KafkaClient(dry_run=args.dry_run)
+        msg, meta = kafka.consume_one(topic=args.consume_review_topic, timeout_s=args.timeout, from_beginning=True)
+        if msg is None:
+            print(json.dumps({"error": "no_message", "meta": meta}))
+            return 2
+        rev = Reviewer(dry_run=args.dry_run, kafka_client=kafka)
+        result = rev.handle_review_response(msg)
+        print(json.dumps(result))
+        return 0
+
+    parser.error("Specify one of --sample-result-file, --consume-topic or --consume-review-topic")
 
 
 if __name__ == "__main__":

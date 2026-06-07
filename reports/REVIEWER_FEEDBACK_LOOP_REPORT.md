@@ -18,7 +18,7 @@ Goals
 
 Behavior
 
-- For safety-sensitive classifications (unsafe, requires_human_approval) the reviewer publishes an approval request to topic: ai.dev.approval.request
+- For safety-sensitive classifications (unsafe, requires_human_approval) the reviewer publishes an approval request to topic: ai.dev.approval.required
 - For safe auto-approve cases (docs-only or dry-run-mode) the reviewer publishes an OFBiz follow-up task to topic: ai.dev.task.ofbiz to perform the commit/push action
 - For completed or failed results the reviewer may not publish additional tasks; it will return the classification for visibility.
 

@@ -56,8 +56,8 @@ class MatrixBridge:
         self.config = config or {}
         self.dry_run = dry_run
         self.matrix_room = self.config.get("matrix_room", "!approvals:example")
-        self.kafka_consume_topic = self.config.get("kafka_consume_topic", "ai.dev.approval.request")
-        self.kafka_publish_topic = self.config.get("kafka_publish_topic", "ai.dev.approval.response")
+        self.kafka_consume_topic = self.config.get("kafka_consume_topic", "ai.dev.approval.required")
+        self.kafka_publish_topic = self.config.get("kafka_publish_topic", "ai.dev.review.out")
         self.matrix = MatrixMock(room=self.matrix_room)
         if kafka_client is not None:
             self.kafka = kafka_client

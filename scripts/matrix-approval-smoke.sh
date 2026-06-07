@@ -69,7 +69,7 @@ run_bridge() {
 
 # 1) Docs-only should auto-approve and publish
 if out=$(run_bridge "$TASK1"); then
-  if echo "$out" | grep -E -q "\[KAFKA-PUBLISH\].*ai.dev.approval.response"; then
+  if echo "$out" | grep -E -q "\[KAFKA-PUBLISH\].*ai.dev.review.out"; then
     echo "[smoke] Docs auto-approve published - OK"
     PASS=$((PASS+1))
   else

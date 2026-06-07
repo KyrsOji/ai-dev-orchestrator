@@ -3,8 +3,8 @@ export PATH="/home/kojiyah/tools/kafka/bin:$PATH"
 set -euo pipefail
 
 BOOTSTRAP="${KAFKA_BOOTSTRAP:-localhost:9092}"
-REQ_TOPIC="ai.dev.approval.request"
-RESP_TOPIC="ai.dev.approval.response"
+REQ_TOPIC="ai.dev.approval.required"
+RESP_TOPIC="ai.dev.review.out"
 TIMEOUT=20
 
 # Sample approval request messages
