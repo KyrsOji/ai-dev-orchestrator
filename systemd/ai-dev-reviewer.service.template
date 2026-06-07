@@ -1,0 +1,18 @@
+[Unit]
+Description=AI Dev Reviewer Service (dry-run)
+After=network.target
+
+[Service]
+Type=simple
+User=openhands-runner
+WorkingDirectory=/opt/ai-dev-orchestrator
+Environment=RUNNER_MODE=dry-run
+ExecStart=/usr/bin/python3 -m reviewer.service --sample-result-file /etc/ai-dev-orchestrator/sample-result.json --dry-run
+Restart=on-failure
+ProtectHome=true
+ProtectSystem=full
+PrivateTmp=true
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target
