@@ -3,7 +3,7 @@ set -euo pipefail
 
 UNIT_FILE="${UNIT_FILE:-/home/kojiyah/dev/ai-dev-orchestrator/systemd/ai-dev-runner-ofbiz-sandboxed.service}"
 RUN_USER="${RUN_USER:-openhands-runner}"
-RUN_DIR="${RUN_DIR:-/home/openhands-runner/openhands-runs}"
+RUN_DIR="${RUN_DIR:-/var/lib/ai-dev-runner/openhands-runs}"
 RUNTIME_DIR="${RUNTIME_DIR:-/opt/ai-dev-orchestrator}"
 WARN=0
 

@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Any, Dict
 
 
 def prepare_run_directory(task: Dict[str, Any], base_dir: str | None = None) -> Dict[str, Any]:
     task_id = str(task.get("taskId") or task.get("task_id") or "unknown-task")
-    root = Path(base_dir or Path.home() / "openhands-runs")
+    # Prefer explicit base_dir argument, then RUNNER_BASE_DIR env var, then user's home
+    env_base = os.environ.get("RUNNER_BASE_DIR")
+    root = Path(base_dir or env_base or Path.home() / "openhands-runs")
     run_dir = root / task_id
     run_dir.mkdir(parents=True, exist_ok=True)
 

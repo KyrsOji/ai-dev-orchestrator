@@ -8,8 +8,8 @@ What was added
 - systemd/ai-dev-runner-ofbiz-sandboxed.service
   - Runs as user `openhands-runner` and keeps RUNNER_MODE and OPENHANDS_MODE set to `dry-run` by default.
   - Enforces hardening options: NoNewPrivileges, PrivateTmp, ProtectSystem=strict, ProtectHome=true, PrivateNetwork=true, RestrictAddressFamilies, ReadOnlyPaths, ReadWritePaths and InaccessiblePaths for sensitive locations.
-  - Uses /opt/ai-dev-orchestrator as the runtime WorkingDirectory and exposes it as ReadOnlyPaths; run artifacts remain under /home/openhands-runner/openhands-runs and logs are placed under /home/openhands-runner/ai-dev-runner-logs (declared via ReadWritePaths).
-  - Adds Environment=RUNNER_LOG_DIR to point the runner at a writable host directory for logs (default: /home/openhands-runner/ai-dev-runner-logs).
+  - Uses /opt/ai-dev-orchestrator as the runtime WorkingDirectory and exposes it as ReadOnlyPaths; run artifacts are placed under /var/lib/ai-dev-runner/openhands-runs and logs are placed under /var/log/ai-dev-runner (declared via ReadWritePaths).
+  - Adds Environment=RUNNER_LOG_DIR and Environment=RUNNER_BASE_DIR to point the runner at writable host directories for logs and run artifacts (defaults: /var/log/ai-dev-runner and /var/lib/ai-dev-runner/openhands-runs).
 
 - scripts/install-sandboxed-runtime.sh
   - Intended to be run as root (via sudo). Creates /opt/ai-dev-orchestrator and copies the following directories from the repository: runner/, scripts/, reports/, and config/ (if present).
@@ -46,7 +46,10 @@ Notes and rationale
 - The smoke script is intentionally non-invasive and safe to run on developer hosts.
 
 Files added/modified
+- runner/run_directory.py (modified)
 - systemd/ai-dev-runner-ofbiz-sandboxed.service (modified)
-- scripts/install-sandboxed-runtime.sh (new)
+- scripts/install-sandboxed-runtime.sh (modified/created)
+- scripts/install-sandboxed-runner-user.sh (modified)
 - scripts/systemd-sandbox-smoke.sh (modified)
+- scripts/logging-smoke.sh (added/modified)
 - reports/SYSTEMD_SANDBOX_REPORT.md (modified)

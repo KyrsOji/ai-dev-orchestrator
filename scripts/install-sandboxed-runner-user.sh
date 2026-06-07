@@ -5,7 +5,8 @@ set -euo pipefail
 
 USER=openhands-runner
 HOMEDIR=/home/$USER
-RUN_DIR="$HOMEDIR/openhands-runs"
+RUN_DIR="${RUN_DIR:-/var/lib/ai-dev-runner/openhands-runs}"
+LOG_DIR="${LOG_DIR:-/var/log/ai-dev-runner}"
 
 echo "[install-sandboxed-runner-user] Checking for user: $USER"
 if getent passwd "$USER" >/dev/null 2>&1; then
@@ -46,6 +47,32 @@ else
   else
     chown "$USER":"$USER" "$RUN_DIR"
     chmod 750 "$RUN_DIR"
+  fi
+fi
+
+# Ensure log directory exists and has correct ownership
+if [ -n "$LOG_DIR" ]; then
+  if [ ! -d "$LOG_DIR" ]; then
+    echo "[install] Creating log directory $LOG_DIR"
+    if [ "$(id -u)" -ne 0 ]; then
+      sudo mkdir -p "$LOG_DIR"
+      sudo chown "$USER":"$USER" "$LOG_DIR"
+      sudo chmod 750 "$LOG_DIR"
+    else
+      mkdir -p "$LOG_DIR"
+      chown "$USER":"$USER" "$LOG_DIR"
+      chmod 750 "$LOG_DIR"
+    fi
+  else
+    echo "[install] Log directory $LOG_DIR already exists"
+    echo "[install] Ensuring ownership and permissions"
+    if [ "$(id -u)" -ne 0 ]; then
+      sudo chown "$USER":"$USER" "$LOG_DIR"
+      sudo chmod 750 "$LOG_DIR"
+    else
+      chown "$USER":"$USER" "$LOG_DIR"
+      chmod 750 "$LOG_DIR"
+    fi
   fi
 fi
 

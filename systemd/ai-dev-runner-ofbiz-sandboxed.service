@@ -12,7 +12,8 @@ Group=openhands-runner
 # Keep default behavior as dry-run unless explicitly overridden
 Environment=RUNNER_MODE=dry-run
 Environment=OPENHANDS_MODE=dry-run
-Environment=RUNNER_LOG_DIR=/home/openhands-runner/ai-dev-runner-logs
+Environment=RUNNER_LOG_DIR=/var/log/ai-dev-runner
+Environment=RUNNER_BASE_DIR=/var/lib/ai-dev-runner/openhands-runs
 
 # Working directory for run artifacts
 WorkingDirectory=/opt/ai-dev-orchestrator
@@ -41,7 +42,7 @@ RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 
 # Run-time writable path(s) for this service
 ReadOnlyPaths=/opt/ai-dev-orchestrator
-ReadWritePaths=/home/openhands-runner/openhands-runs /home/openhands-runner/ai-dev-runner-logs
+ReadWritePaths=/var/lib/ai-dev-runner/openhands-runs /var/log/ai-dev-runner
 
 # Deny access to sensitive locations
 InaccessiblePaths=/root /etc/ssh /home/kojiyah /opt/ai-dev-runner/certs
