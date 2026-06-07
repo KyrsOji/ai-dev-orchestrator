@@ -1,0 +1,56 @@
+[Unit]
+Description=AI Dev Runner OFBiz (sandboxed)
+Documentation=
+After=network.target
+
+[Service]
+Type=simple
+# Run as a dedicated unprivileged user
+User=openhands-runner
+Group=openhands-runner
+
+# Keep default behavior as dry-run unless explicitly overridden
+Environment=RUNNER_MODE=dry-run
+Environment=OPENHANDS_MODE=dry-run
+
+# Working directory for run artifacts
+WorkingDirectory=/home/openhands-runner/openhands-runs
+
+# Command - run the runner service module using system Python
+# NOTE: Do NOT enable execute mode in this unit by default.
+ExecStart=/usr/bin/env python3 -m runner.service
+Restart=on-failure
+RestartSec=5s
+
+# Systemd sandboxing / hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+ProtectKernelModules=true
+PrivateDevices=true
+LockPersonality=true
+# Restrict address families - keep conservative defaults (allow unix and IPv4/IPv6)
+# PrivateNetwork=true creates an isolated namespace; combined with these directives
+# the unit will be highly constrained by default.
+PrivateNetwork=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+# Run-time writable path(s) for this service
+ReadWritePaths=/home/openhands-runner/openhands-runs
+
+# Deny access to sensitive locations
+InaccessiblePaths=/root /etc/ssh /home/kojiyah /opt/ai-dev-runner/certs
+InaccessiblePaths=/home/*/.ssh
+
+# Minimal capabilities (don't grant extra capabilities)
+# CapabilityBoundingSet=CAP_AUDIT_WRITE CAP_KILL CAP_NET_BIND_SERVICE
+# (left as default but NoNewPrivileges helps prevent escalation)
+
+# Helpful limits
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target
