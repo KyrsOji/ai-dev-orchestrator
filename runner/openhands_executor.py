@@ -32,6 +32,14 @@ def execute_task(run_dir: str, task: Dict[str, Any]) -> Dict[str, Any]:
         return result
 
     cmd = shlex.split(command) + shlex.split(args)
+    # If SANDBOX_WRAPPER is provided, run the command via the sandbox wrapper.
+    # The wrapper is expected to accept: <run_dir> -- <command> [args...]
+    sandbox = os.environ.get("SANDBOX_WRAPPER")
+    if sandbox:
+        # Allow sandbox to be a command string with args; split it safely.
+        sandbox_parts = shlex.split(sandbox)
+        cmd = sandbox_parts + [str(run_path), "--"] + cmd
+
     proc = subprocess.run(
         cmd,
         cwd=str(run_path),
