@@ -103,8 +103,15 @@ done
 BWRAP_ARGS+=("--bind" "$RUN_DIR" "/run")
 BWRAP_ARGS+=("--chdir" "/run")
 
-# Disable networking
-BWRAP_ARGS+=("--unshare-net")
+# Network handling controlled by SANDBOX_DISABLE_NETWORK (default true)
+SANDBOX_DISABLE_NETWORK="${SANDBOX_DISABLE_NETWORK:-true}"
+if [ "$SANDBOX_DISABLE_NETWORK" = "true" ]; then
+  NET_MODE_ENABLED=true
+  BWRAP_ARGS+=("--unshare-net")
+else
+  NET_MODE_ENABLED=false
+  echo "[sandbox-wrapper][warning] SANDBOX_DISABLE_NETWORK=false: skipping --unshare-net; running without network isolation." >&2
+fi
 
 # Make the sandbox die with the parent
 BWRAP_ARGS+=("--die-with-parent")
@@ -115,5 +122,25 @@ BWRAP_ARGS+=("--setenv" "PATH" "/usr/bin:/bin")
 # Final command: run the copied command from /run
 IN_SANDBOX_CMD=("/run/$EXEC_BASENAME" "${CMD_ARGS[@]}")
 
-# Execute bubblewrap
+# If network-unshare was requested, perform a test run to detect RTM_NEWADDR permission failures
+if [ "$NET_MODE_ENABLED" = true ]; then
+  TMPERR=$(mktemp)
+  # run a minimal true command inside bwrap to validate network unshare
+  if ! bwrap "${BWRAP_ARGS[@]}" -- true 2> "$TMPERR"; then
+    ERRMSG=$(sed -n '1,200p' "$TMPERR" || true)
+    rm -f "$TMPERR"
+    if echo "$ERRMSG" | grep -qiE 'RTM_NEWADDR|Failed RTM_NEWADDR|RTNETLINK|Operation not permitted'; then
+      echo "[sandbox-wrapper][error] bubblewrap failed to setup network namespace: $ERRMSG" >&2
+      echo "[sandbox-wrapper][error] SANDBOX_DISABLE_NETWORK=true -> refusing to run (fail-closed)." >&2
+      exit 7
+    else
+      echo "[sandbox-wrapper][error] bubblewrap failed during preflight: $ERRMSG" >&2
+      exit 8
+    fi
+  else
+    rm -f "$TMPERR"
+  fi
+fi
+
+# Execute bubblewrap with the actual command
 exec bwrap "${BWRAP_ARGS[@]}" -- "${IN_SANDBOX_CMD[@]}"

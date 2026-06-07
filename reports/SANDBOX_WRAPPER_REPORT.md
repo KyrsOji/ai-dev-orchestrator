@@ -11,6 +11,11 @@ What I added
   - Runs the command as /run/<cmd> inside the sandbox with working directory /run.
   - Fails closed if bubblewrap (bwrap) is not installed.
 
+  - Introduces SANDBOX_DISABLE_NETWORK environment variable to control network namespace behavior. Default: true.
+    - If SANDBOX_DISABLE_NETWORK=true (default): the wrapper attempts to use bwrap --unshare-net. If this fails due to RTM_NEWADDR / "Operation not permitted" (common on hosts without network namespace capability), the wrapper refuses to run (fail-closed) and exits with a stable non-zero code.
+    - If SANDBOX_DISABLE_NETWORK=false: the wrapper will skip --unshare-net and run the sandbox without unsharing network, but prints a warning to stderr indicating reduced isolation.
+
+
 - scripts/sandbox-wrapper-smoke.sh
   - Smoke test for the wrapper. If bwrap is present it will run the wrapper with the OpenHands stub and verify validation.txt. If bwrap is absent the wrapper should refuse to run; the smoke script treats that refusal as a pass (fail-closed behavior validated).
 
