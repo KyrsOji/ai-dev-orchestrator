@@ -26,6 +26,8 @@ from typing import Any, Dict, Optional, Tuple
 
 from . import run_directory
 from . import result_publisher
+from . import openhands_executor
+from . import execution_guard
 
 
 # Configuration
@@ -221,18 +223,25 @@ def main() -> int:
 
                 if execution_mode == "execute":
                     logging.info("OpenHands execution mode: execute (timeout=%s seconds)", timeout_seconds)
-                    exec_meta = openhands_executor.execute_task(task, run_dir, timeout_seconds=timeout_seconds)
-                    # Map executor status to result status
-                    exec_status = exec_meta.get("status")
-                    if exec_status == "executed":
-                        status = "executed"
-                    elif exec_status in ("failed", "error", "timeout"):
-                        status = "failed"
+                    # Run the execution guard before attempting to execute OpenHands
+                    allowed, guard_meta = execution_guard.guard_execution(task, run_dir)
+                    if not allowed:
+                        reason = guard_meta.get("reason", "blocked_by_execution_guard")
+                        logging.error("Execution guard blocked execution: %s", reason)
+                        result_msg = build_result_message(task, run_dir, status="failed", summary=f"Execution blocked by guard: {reason}")
                     else:
-                        status = exec_status or "failed"
-                    summary = exec_meta.get("summary", "")
-                    exec_duration = exec_meta.get("executionDurationSeconds")
-                    result_msg = build_result_message(task, run_dir, status=status, summary=summary, execution_duration_seconds=exec_duration)
+                        # Execute using the OpenHands executor (executor reads OPENHANDS_* env vars)
+                        exec_meta = openhands_executor.execute_task(run_dir, task)
+                        # Map executor status to result status
+                        exec_status = exec_meta.get("status")
+                        if exec_status in ("completed", "executed"):
+                            status = "executed"
+                        elif exec_status in ("failed", "error", "timeout"):
+                            status = "failed"
+                        else:
+                            status = exec_status or "failed"
+                        summary = exec_meta.get("summary", "") or exec_meta.get("stdout", "")[:1000]
+                        result_msg = build_result_message(task, run_dir, status=status, summary=summary)
                 else:
                     logging.info("OpenHands execution mode: dry-run; skipping execution")
                     result_msg = build_result_message(task, run_dir, status="dry_run_completed")
