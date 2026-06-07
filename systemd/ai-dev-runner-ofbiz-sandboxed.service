@@ -14,7 +14,7 @@ Environment=RUNNER_MODE=dry-run
 Environment=OPENHANDS_MODE=dry-run
 
 # Working directory for run artifacts
-WorkingDirectory=/home/openhands-runner/openhands-runs
+WorkingDirectory=/opt/ai-dev-orchestrator
 
 # Command - run the runner service module using system Python
 # NOTE: Do NOT enable execute mode in this unit by default.
@@ -39,6 +39,7 @@ PrivateNetwork=true
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 
 # Run-time writable path(s) for this service
+ReadOnlyPaths=/opt/ai-dev-orchestrator
 ReadWritePaths=/home/openhands-runner/openhands-runs
 
 # Deny access to sensitive locations
