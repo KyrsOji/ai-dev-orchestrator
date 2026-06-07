@@ -48,9 +48,13 @@ try:
 except Exception:
     OPENHANDS_TIMEOUT_SECONDS = 1800
 
-# Logging path (repo-root/logs/ofbiz-runner.log)
+# Logging path (default repo-root/logs/ofbiz-runner.log) - can be overridden with RUNNER_LOG_DIR
 REPO_ROOT = os.path.dirname(os.path.dirname(__file__))
-LOG_DIR = os.path.join(REPO_ROOT, "logs")
+RUNNER_LOG_DIR = os.environ.get("RUNNER_LOG_DIR", "")
+if RUNNER_LOG_DIR:
+    LOG_DIR = RUNNER_LOG_DIR
+else:
+    LOG_DIR = os.path.join(REPO_ROOT, "logs")
 LOG_PATH = os.path.join(LOG_DIR, "ofbiz-runner.log")
 
 # Control flag for graceful shutdown
@@ -62,16 +66,33 @@ def _iso_now() -> str:
 
 
 def _setup_logging() -> None:
-    os.makedirs(LOG_DIR, exist_ok=True)
-    # Basic file logging; also write a short message to stdout so systemd/users
-    # see immediate feedback when starting manually.
+    # Attempt to create the log directory; if this fails, fall back to stdout-only logging
+    try:
+        os.makedirs(LOG_DIR, exist_ok=True)
+    except Exception as e:
+        # Cannot create the log directory (e.g. read-only FS). Fall back to stream-only logging.
+        print(f"[warning] Could not create log directory {LOG_DIR}: {e}", file=sys.stderr)
+        logging.basicConfig(
+            level=logging.INFO,
+            format="%(asctime)s %(levelname)s %(message)s",
+            handlers=[logging.StreamHandler(sys.stdout)],
+        )
+        return
+
+    handlers = []
+    # Try to add a file handler; if that fails, keep stream-only handler
+    try:
+        fh = logging.FileHandler(LOG_PATH, encoding="utf-8")
+        handlers.append(fh)
+    except Exception as e:
+        print(f"[warning] Could not open log file {LOG_PATH}: {e}", file=sys.stderr)
+
+    handlers.append(logging.StreamHandler(sys.stdout))
+
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(message)s",
-        handlers=[
-            logging.FileHandler(LOG_PATH, encoding="utf-8"),
-            logging.StreamHandler(sys.stdout),
-        ],
+        handlers=handlers,
     )
 
 

@@ -8,16 +8,22 @@ What was added
 - systemd/ai-dev-runner-ofbiz-sandboxed.service
   - Runs as user `openhands-runner` and keeps RUNNER_MODE and OPENHANDS_MODE set to `dry-run` by default.
   - Enforces hardening options: NoNewPrivileges, PrivateTmp, ProtectSystem=strict, ProtectHome=true, PrivateNetwork=true, RestrictAddressFamilies, ReadOnlyPaths, ReadWritePaths and InaccessiblePaths for sensitive locations.
-  - Uses /opt/ai-dev-orchestrator as the runtime WorkingDirectory and exposes it as ReadOnlyPaths; run artifacts remain under /home/openhands-runner/openhands-runs (declared via ReadWritePaths).
+  - Uses /opt/ai-dev-orchestrator as the runtime WorkingDirectory and exposes it as ReadOnlyPaths; run artifacts remain under /home/openhands-runner/openhands-runs and logs are placed under /home/openhands-runner/ai-dev-runner-logs (declared via ReadWritePaths).
+  - Adds Environment=RUNNER_LOG_DIR to point the runner at a writable host directory for logs (default: /home/openhands-runner/ai-dev-runner-logs).
 
 - scripts/install-sandboxed-runtime.sh
   - Intended to be run as root (via sudo). Creates /opt/ai-dev-orchestrator and copies the following directories from the repository: runner/, scripts/, reports/, and config/ (if present).
   - Does NOT copy .git, secrets, certs, logs, run directories, or keystores.
-  - Sets ownership to root:openhands-runner and enforces conservative permissions: directories 750, files 640, and makes scripts executable (750).
+  - Sets ownership to root:openhands-runner for /opt runtime and enforces conservative permissions: directories 750, files 640, and makes scripts executable (750).
+  - Ensures the host writable logging directory (/home/openhands-runner/ai-dev-runner-logs) exists and sets appropriate ownership and permissions.
 
 - scripts/systemd-sandbox-smoke.sh
   - Smoke checks that verify the unit file syntax (if systemd-analyze is available), that the user exists, that run directory permissions are correct, that /opt/ai-dev-orchestrator exists, and that the unit uses it as WorkingDirectory and ReadOnlyPaths.
   - Does NOT start or enable the service and does NOT enable execute mode by default.
+
+- scripts/logging-smoke.sh
+  - Validates that the unit sets Environment=RUNNER_LOG_DIR and that the declared log directory exists and is writable by the runner user.
+  - Helpful to verify logging will succeed when the unit is sandboxed.
 
 Security notes
 - The systemd unit aims for defense-in-depth: even when bubblewrap is unavailable, systemd options reduce the attack surface.

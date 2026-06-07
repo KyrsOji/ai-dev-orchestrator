@@ -30,6 +30,20 @@ mkdir -p "$TARGET_DIR"
 chown root:"$RUNNER_GROUP" "$TARGET_DIR"
 chmod 0750 "$TARGET_DIR"
 
+# Create host writable log directory for the runner (outside the read-only /opt runtime)
+LOG_DIR="${LOG_DIR:-/home/openhands-runner/ai-dev-runner-logs}"
+if [ -n "$LOG_DIR" ]; then
+  echo "[install] Ensuring log directory exists: $LOG_DIR"
+  mkdir -p "$LOG_DIR"
+  # If the unprivileged user exists, make them the owner; otherwise keep group ownership
+  if getent passwd "openhands-runner" >/dev/null 2>&1; then
+    chown "openhands-runner":"openhands-runner" "$LOG_DIR"
+  else
+    chown root:"$RUNNER_GROUP" "$LOG_DIR"
+  fi
+  chmod 0750 "$LOG_DIR"
+fi
+
 # rsync exclude patterns - do not copy secrets, certs, logs, run dirs, keystores, or .git
 RSYNC_EXCLUDES=(
   --exclude='.git'
