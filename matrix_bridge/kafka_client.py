@@ -11,6 +11,7 @@ import os
 import shutil
 import subprocess
 import logging
+import time
 from typing import Any, Dict, Optional, Tuple
 
 logger = logging.getLogger(__name__)
@@ -43,6 +44,9 @@ def _parse_first_json_from_text(text: str) -> Optional[Dict[str, Any]]:
             return None
     return None
 
+
+import threading
+import signal
 
 class KafkaClient:
     def __init__(self, dry_run: bool = False) -> None:
@@ -94,7 +98,106 @@ class KafkaClient:
             logger.exception("kafka publish failed")
             return False, {"topic": topic, "error": str(exc), "errorType": type(exc).__name__}
 
+    def _read_and_log_stream(self, stream, level=logging.INFO):
+        for ln in iter(stream.readline, ""):
+            ln = ln.rstrip("\n")
+            if ln:
+                logger.log(level, "kafka-consumer-cli: %s", ln)
+        stream.close()
+
+    def listen(self, topic: str = "ai.dev.approval.required", group: str = "ai-dev-matrix-bridge-group", from_beginning: bool = False):
+        """Persistent iterator that yields (payload_dict, meta).
+
+        Prefers kafka-console-consumer CLI (so KAFKA_CLIENT_CONFIG works). Falls back
+        to kafka-python consumer when available and CLI not usable.
+        """
+        backoff = 1
+        # If CLI available, use it (so Java-style client config files work)
+        if self.consumer_cli:
+            logger.info("Using kafka-console-consumer CLI for persistent consumption topic=%s group=%s", topic, group)
+            while True:
+                cmd = [self.consumer_cli, "--bootstrap-server", self.bootstrap, "--topic", topic, "--group", group]
+                if from_beginning:
+                    cmd.append("--from-beginning")
+                if self.client_config:
+                    cmd.extend(["--consumer.config", self.client_config])
+                try:
+                    logger.info("Starting kafka-console-consumer: %s", " ".join(cmd))
+                    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, bufsize=1, preexec_fn=os.setsid)
+
+                    # Start thread to read stderr so process doesn't block
+                    stderr_thread = threading.Thread(target=self._read_and_log_stream, args=(proc.stderr, logging.ERROR), daemon=True)
+                    stderr_thread.start()
+
+                    assert proc.stdout is not None
+                    for raw in iter(proc.stdout.readline, ""):
+                        if raw is None:
+                            break
+                        line = raw.strip()
+                        if not line:
+                            continue
+                        payload = _parse_first_json_from_text(line)
+                        if not payload:
+                            logger.debug("Non-JSON or unparsable line from consumer: %s", line)
+                            continue
+                        yield payload, {"used_cli": True}
+
+                    rc = proc.poll()
+                    logger.warning("kafka-console-consumer terminated with rc=%s; restarting after %s seconds", rc, backoff)
+                    try:
+                        os.killpg(proc.pid, signal.SIGTERM)
+                    except Exception:
+                        try:
+                            proc.kill()
+                        except Exception:
+                            pass
+                    time.sleep(backoff)
+                    backoff = min(30, backoff * 2)
+                    continue
+                except KeyboardInterrupt:
+                    logger.info("Stopping kafka persistent consumer (keyboard interrupt)")
+                    try:
+                        os.killpg(proc.pid, signal.SIGTERM)
+                    except Exception:
+                        try:
+                            proc.terminate()
+                        except Exception:
+                            pass
+                    return
+                except Exception:
+                    logger.exception("Error while running kafka persistent consumer; retrying")
+                    time.sleep(backoff)
+                    backoff = min(30, backoff * 2)
+                    continue
+
+        # CLI not available; try kafka-python persistent consumer if installed
+        try:
+            import importlib
+            if importlib.util.find_spec("kafka") is None:
+                logger.error("No viable Kafka consumer available: install kafka-python or ensure kafka-console-consumer is on PATH; cannot consume from Kafka")
+                return
+            from kafka import KafkaConsumer
+
+            logger.info("Using kafka-python KafkaConsumer for persistent consumption topic=%s group=%s", topic, group)
+            auto_offset = "earliest" if from_beginning else "latest"
+            consumer = KafkaConsumer(topic, bootstrap_servers=[self.bootstrap], group_id=group, auto_offset_reset=auto_offset, enable_auto_commit=True)
+            for msg in consumer:
+                try:
+                    val = msg.value
+                    if isinstance(val, (bytes, bytearray)):
+                        txt = val.decode("utf-8")
+                    else:
+                        txt = str(val)
+                    payload = json.loads(txt)
+                    yield payload, {"used_python_client": True, "partition": getattr(msg, 'partition', None), "offset": getattr(msg, 'offset', None)}
+                except Exception:
+                    logger.exception("Failed to parse/ingest message from kafka-python consumer")
+        except Exception:
+            logger.exception("No viable Kafka consumer available: install kafka-python or ensure kafka-console-consumer is on PATH; cannot consume from Kafka")
+            return
+
     def consume_one(self, topic: str = "ai.dev.approval.required", timeout_s: int = 10, from_beginning: bool = False) -> Tuple[Optional[Dict[str, Any]], Dict[str, Any]]:
+        # Preserve existing consume_one behavior for compatibility
         if self.consumer_cli:
             cmd = [self.consumer_cli, "--bootstrap-server", self.bootstrap, "--topic", topic, "--max-messages", "1", "--timeout-ms", str(timeout_s * 1000)]
             if from_beginning:

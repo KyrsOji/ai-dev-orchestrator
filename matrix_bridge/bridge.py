@@ -297,48 +297,37 @@ def main(argv: Optional[List[str]] = None) -> int:
         signal.signal(signal.SIGINT, lambda *a: sys.exit(0))
         signal.signal(signal.SIGTERM, lambda *a: sys.exit(0))
 
-        # Poll loop
+        # Persistent consumer loop
         topic = bridge.kafka_consume_topic
         logger.info("Starting daemon to consume topic=%s", topic)
         try:
             while True:
                 try:
                     from_beginning = bool(getattr(args, 'consume_from_beginning', False))
-                    logger.info("Attempting to consume one message from topic=%s (timeout=%s, from_beginning=%s)", topic, max(1, args.timeout), from_beginning)
-                    msg, meta = kafka.consume_one(topic=topic, timeout_s=max(1, args.timeout), from_beginning=from_beginning)
+                    logger.info("Starting persistent consumer for topic=%s (from_beginning=%s)", topic, from_beginning)
+                    # iterate over messages; listen() will restart CLI consumer on failure
+                    for msg, meta in kafka.listen(topic=topic, group="ai-dev-matrix-bridge-group", from_beginning=from_beginning):
+                        try:
+                            if msg is None:
+                                continue
+                            # Log safe fields from the message (taskId)
+                            task_id = msg.get('taskId') if isinstance(msg, dict) else None
+                            logger.info("Received message from topic=%s taskId=%s; processing...", topic, task_id)
+                            resp = bridge.process_approval_request(msg, wait_seconds=args.wait_seconds)
+                            # Print a short summary to stdout for scripts to inspect
+                            print(f"[BRIDGE] processed task={msg.get('taskId')} decision={resp.decision}")
+                        except Exception:
+                            logger.exception("Failed to process approval request")
+                    # listen returned (consumer died); restart after a short backoff
+                    logger.warning("Persistent consumer stopped unexpectedly; will restart after backoff")
+                    time.sleep(2)
+                    continue
                 except SystemExit:
                     raise
                 except Exception:
-                    logger.exception("Error while consuming message; will retry after backoff")
+                    logger.exception("Error in persistent consumer; will retry after backoff")
                     time.sleep(5)
                     continue
-
-                if msg is None:
-                    # no message within timeout
-                    logger.info("No message received from consume_one; meta=%s", meta)
-                    # If available, show the CLI command used for diagnosis (do not print credentials)
-                    if isinstance(meta, dict) and meta.get('cmd'):
-                        try:
-                            cmd = meta.get('cmd')
-                            if isinstance(cmd, list):
-                                logger.info("Consumer CLI command: %s", " ".join(cmd))
-                            else:
-                                logger.info("Consumer CLI command: %s", str(cmd))
-                        except Exception:
-                            pass
-                    # Brief sleep to avoid busy looping
-                    time.sleep(0.1)
-                    continue
-
-                try:
-                    # Log safe fields from the message (taskId)
-                    task_id = msg.get('taskId') if isinstance(msg, dict) else None
-                    logger.info("Received message from topic=%s taskId=%s; processing...", topic, task_id)
-                    resp = bridge.process_approval_request(msg, wait_seconds=args.wait_seconds)
-                    # Print a short summary to stdout for scripts to inspect
-                    print(f"[BRIDGE] processed task={msg.get('taskId')} decision={resp.decision}")
-                except Exception:
-                    logger.exception("Failed to process approval request")
         except SystemExit:
             logger.info("Daemon exiting on signal")
             return 0
