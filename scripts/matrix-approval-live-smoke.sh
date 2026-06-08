@@ -84,7 +84,7 @@ echo "Please send the Matrix command in that room: approve MATRIX-LIVE-SMOKE-001
 
 # Run bridge in foreground with total timeout
 set +e
-timeout "${TOTAL_TIMEOUT}s" MATRIX_MODE=real MATRIX_HOMESERVER_URL="$HOMESERVER" MATRIX_ACCESS_TOKEN="$TOKEN" MATRIX_ROOM_ID="$ROOM_ID" $PYTHON -m matrix_bridge.bridge --consume-topic ai.dev.approval.required --matrix-mode real --wait-seconds "$WAIT_SECS"
+timeout "${TOTAL_TIMEOUT}s" env MATRIX_MODE=real MATRIX_HOMESERVER_URL="$HOMESERVER" MATRIX_ACCESS_TOKEN="$TOKEN" MATRIX_ROOM_ID="$ROOM_ID" $PYTHON -m matrix_bridge.bridge --consume-topic ai.dev.approval.required --matrix-mode real --wait-seconds "$WAIT_SECS"
 BRIDGE_RC=$?
 set -e
 
