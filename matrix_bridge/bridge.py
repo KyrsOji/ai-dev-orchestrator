@@ -272,6 +272,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("--sample-task-file", help="Path to a JSON file containing a single approval request task")
     parser.add_argument("--mock-commands-file", help="Path to a file containing newline-separated mock Matrix commands")
     parser.add_argument("--consume-topic", help="Consume a single message from a Kafka topic and process it")
+    parser.add_argument("--daemon", action="store_true", help="Run as long-running daemon consuming approvals")
     parser.add_argument("--timeout", type=int, default=10, help="Timeout seconds for Kafka consume")
     parser.add_argument("--wait-seconds", type=int, default=30, help="Seconds to wait for a Matrix command in real mode")
 
@@ -285,7 +286,45 @@ def main(argv: Optional[List[str]] = None) -> int:
     if args.matrix_mode:
         cfg["matrix_mode"] = args.matrix_mode
 
-    # If consuming from Kafka
+    # If running as a daemon, subscribe continuously and process messages
+    if args.daemon:
+        kafka = KafkaClient(dry_run=args.dry_run)
+        bridge = MatrixBridge(cfg, dry_run=args.dry_run, kafka_client=kafka)
+        # Install simple signal handlers for graceful shutdown
+        import signal, sys
+
+        signal.signal(signal.SIGINT, lambda *a: sys.exit(0))
+        signal.signal(signal.SIGTERM, lambda *a: sys.exit(0))
+
+        # Poll loop
+        topic = bridge.kafka_consume_topic
+        logger.info("Starting daemon to consume topic=%s", topic)
+        try:
+            while True:
+                try:
+                    msg, meta = kafka.consume_one(topic=topic, timeout_s=max(1, args.timeout), from_beginning=False)
+                except SystemExit:
+                    raise
+                except Exception:
+                    logger.exception("Error while consuming message; will retry after backoff")
+                    time.sleep(5)
+                    continue
+
+                if msg is None:
+                    # no message within timeout
+                    continue
+
+                try:
+                    resp = bridge.process_approval_request(msg, wait_seconds=args.wait_seconds)
+                    # Print a short summary to stdout for scripts to inspect
+                    print(f"[BRIDGE] processed task={msg.get('taskId')} decision={resp.decision}")
+                except Exception:
+                    logger.exception("Failed to process approval request")
+        except SystemExit:
+            logger.info("Daemon exiting on signal")
+            return 0
+
+    # If consuming from Kafka once
     if args.consume_topic:
         kafka = KafkaClient(dry_run=args.dry_run)
         msg, meta = kafka.consume_one(topic=args.consume_topic, timeout_s=args.timeout, from_beginning=True)

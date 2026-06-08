@@ -15,7 +15,7 @@ Environment=MATRIX_MODE=real
 # MATRIX_HOMESERVER_URL, MATRIX_ACCESS_TOKEN and MATRIX_ROOM_ID must be provided
 # e.g. via EnvironmentFile=/etc/ai-dev-orchestrator/matrix.env
 # ExecStart runs without --dry-run so it will connect to Matrix when configured
-ExecStart=/usr/bin/python3 -m matrix_bridge.bridge --config ${CONFIG_PATH} --matrix-mode real
+ExecStart=/usr/bin/python3 -m matrix_bridge.bridge --config ${CONFIG_PATH} --matrix-mode real --daemon
 Restart=on-failure
 ProtectHome=true
 ProtectSystem=full
