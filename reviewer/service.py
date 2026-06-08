@@ -43,6 +43,43 @@ class Reviewer:
         self.approval_topic = os.environ.get("APPROVAL_TOPIC", "ai.dev.approval.required")
         self.task_topic = os.environ.get("TASK_TOPIC", "ai.dev.task.ofbiz")
         self.review_topic = os.environ.get("REVIEW_TOPIC", "ai.dev.review.out")
+        # Path to registry storage used for agent selection. Can be overridden in the environment.
+        self.registry_storage = os.environ.get("AGENT_REGISTRY_STORAGE", "/tmp/ai-dev-agent-registry.json")
+
+    def _select_agent_for_topic(self, topic: str):
+        """Select an agent matching the role implied by a task topic.
+
+        Returns a tuple (AgentStatus | None, reason_str).
+        Reasons: 'idle_fresh_heartbeat', 'no_available_agent', 'registry_load_error'.
+        """
+        role = topic.rsplit(".", 1)[-1] if "." in topic else topic
+        try:
+            from datetime import datetime, timezone
+            from registry.service import AgentRegistry
+
+            reg = AgentRegistry(storage_path=self.registry_storage)
+            reg.load_storage()
+            agents = reg.list_agents()
+        except Exception as exc:
+            logger.exception("Failed to load agent registry: %s", exc)
+            return None, "registry_load_error"
+
+        # Filter: role match and status == idle
+        candidates = [a for a in agents if role in (a.roles or []) and (a.status or "").lower() == "idle"]
+        if not candidates:
+            return None, "no_available_agent"
+
+        # Prefer freshest heartbeat (most recent lastSeen)
+        def _parse_last(a):
+            try:
+                # lastSeen stored as ISO8601 with trailing Z
+                return datetime.fromisoformat(a.lastSeen.replace("Z", "+00:00")).replace(tzinfo=timezone.utc)
+            except Exception:
+                return datetime(1970, 1, 1, tzinfo=timezone.utc)
+
+        candidates.sort(key=_parse_last, reverse=True)
+        selected = candidates[0]
+        return selected, "idle_fresh_heartbeat"
 
     def classify(self, result: Dict[str, Any]) -> ReviewResult:
         task_id = result.get("taskId") or result.get("id") or "unknown"
@@ -108,12 +145,35 @@ class Reviewer:
 
         if review.classification in ("ready_to_commit", "ready_to_push"):
             # Publish a follow-up OFBiz task to perform the commit/push (mock)
+            action = "commit" if review.classification == "ready_to_commit" else "push"
             payload = {
                 "taskId": review.taskId,
-                "action": "commit" if review.classification == "ready_to_commit" else "push",
+                "action": action,
                 "details": review.details,
             }
-            self.kafka.publish(self.task_topic, payload)
+            # Try to select an appropriate agent for the task topic
+            selected, selection_reason = self._select_agent_for_topic(self.task_topic)
+            if selected is None:
+                # No agent available -> ask for human approval so an operator can intervene
+                approval_payload = {
+                    "taskId": review.taskId,
+                    "classification": "requires_human_approval",
+                    "reason": "NO_AVAILABLE_AGENT",
+                    "details": {"original": payload},
+                }
+                self.kafka.publish(self.approval_topic, approval_payload)
+                logger.info("No available agent for role %s. Published approval request.", self.task_topic)
+            else:
+                role = self.task_topic.rsplit(".", 1)[-1] if "." in self.task_topic else self.task_topic
+                payload["routing"] = {
+                    "selectedAgentId": selected.agentId,
+                    "selectedHostname": selected.hostname,
+                    "selectedRole": role,
+                    "selectionReason": selection_reason,
+                }
+                logger.info("Selected agent: %s", selected.agentId)
+                logger.info("Reason: %s", selection_reason)
+                self.kafka.publish(self.task_topic, payload)
 
         # For completed/failed/needs_more_info we do not publish additional tasks here
         return review
@@ -146,6 +206,27 @@ class Reviewer:
                     "action": action,
                     "details": {"policy": policy, "reason": reason},
                 }
+                # Agent selection before publishing
+                selected, selection_reason = self._select_agent_for_topic(self.task_topic)
+                if selected is None:
+                    approval_payload = {
+                        "taskId": task_id,
+                        "classification": "requires_human_approval",
+                        "reason": "NO_AVAILABLE_AGENT",
+                        "details": {"original": payload},
+                    }
+                    self.kafka.publish(self.approval_topic, approval_payload)
+                    logger.info("No available agent for role %s when handling approval response. Published approval request.", self.task_topic)
+                    return {"taskId": task_id, "published": False, "reason": "no_available_agent"}
+                role = self.task_topic.rsplit(".", 1)[-1] if "." in self.task_topic else self.task_topic
+                payload["routing"] = {
+                    "selectedAgentId": selected.agentId,
+                    "selectedHostname": selected.hostname,
+                    "selectedRole": role,
+                    "selectionReason": selection_reason,
+                }
+                logger.info("Selected agent: %s", selected.agentId)
+                logger.info("Reason: %s", selection_reason)
                 self.kafka.publish(self.task_topic, payload)
                 return {"taskId": task_id, "published": True, "action": action}
 
