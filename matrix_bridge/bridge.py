@@ -273,6 +273,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("--mock-commands-file", help="Path to a file containing newline-separated mock Matrix commands")
     parser.add_argument("--consume-topic", help="Consume a single message from a Kafka topic and process it")
     parser.add_argument("--daemon", action="store_true", help="Run as long-running daemon consuming approvals")
+    parser.add_argument("--consume-from-beginning", action="store_true", help="When running as daemon, consume from beginning (smoke/testing)")
     parser.add_argument("--timeout", type=int, default=10, help="Timeout seconds for Kafka consume")
     parser.add_argument("--wait-seconds", type=int, default=30, help="Seconds to wait for a Matrix command in real mode")
 
@@ -302,8 +303,9 @@ def main(argv: Optional[List[str]] = None) -> int:
         try:
             while True:
                 try:
-                    logger.info("Attempting to consume one message from topic=%s (timeout=%s, from_beginning=%s)", topic, max(1, args.timeout), False)
-                    msg, meta = kafka.consume_one(topic=topic, timeout_s=max(1, args.timeout), from_beginning=False)
+                    from_beginning = bool(getattr(args, 'consume_from_beginning', False))
+                    logger.info("Attempting to consume one message from topic=%s (timeout=%s, from_beginning=%s)", topic, max(1, args.timeout), from_beginning)
+                    msg, meta = kafka.consume_one(topic=topic, timeout_s=max(1, args.timeout), from_beginning=from_beginning)
                 except SystemExit:
                     raise
                 except Exception:
