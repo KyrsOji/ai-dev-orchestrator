@@ -1,0 +1,20 @@
+[Unit]
+Description=ai-dev-agent-heartbeat for %i
+After=network.target
+
+[Service]
+Type=simple
+# Replace <USER> with the system user to run the service (or leave out to run as root)
+User=<USER>
+WorkingDirectory=/home/<USER>/dev/ai-dev-orchestrator
+# Environment file should set AGENT_ID, AGENT_ROLES, AGENT_STATUS, KAFKA_BOOTSTRAP, KAFKA_CLIENT_CONFIG, AGENT_HEARTBEAT_INTERVAL_SECONDS
+EnvironmentFile=/etc/ai-dev/agent-heartbeat-%i.env
+# Prefer CLI producer by default
+Environment=KAFKA_FORCE_CLI=1
+# Run a single publisher process that periodically emits heartbeats
+ExecStart=/usr/bin/env bash -lc 'python3 -m registry.heartbeat_publisher --agent-id "${AGENT_ID}" --roles "${AGENT_ROLES}" --interval ${AGENT_HEARTBEAT_INTERVAL_SECONDS:-60}'
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
