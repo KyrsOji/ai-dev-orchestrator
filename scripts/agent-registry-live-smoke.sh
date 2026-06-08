@@ -27,7 +27,7 @@ if [[ "${AGENT_REGISTRY_RUN_MODE:-smoke}" == "smoke" ]]; then
   # Use a unique consumer group for smoke runs so committed offsets do not affect consumption
   export AGENT_REGISTRY_CONSUMER_GROUP="ai-dev-agent-registry-group-$(date +%s)-$RANDOM"
   # Allow scanning more messages when running live against a topic with backlog
-  export AGENT_REGISTRY_CONSUMER_MAX_MESSAGES="${AGENT_REGISTRY_CONSUMER_MAX_MESSAGES:-50}"
+  export AGENT_REGISTRY_CONSUMER_MAX_MESSAGES="${AGENT_REGISTRY_CONSUMER_MAX_MESSAGES:-10}"
   export AGENT_REGISTRY_CONSUMER_TIMEOUT_MS="${AGENT_REGISTRY_CONSUMER_TIMEOUT_MS:-5000}"
 fi
 
