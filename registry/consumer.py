@@ -130,7 +130,18 @@ def consume_kafka_persistent(topic: str, registry: AgentRegistry, *, timeout_s: 
             run_mode_norm = "service"
         if run_mode_norm == "smoke":
             # limit messages and add an internal consumer timeout to ensure CLI exits
-            cmd.extend(["--max-messages", "1", "--timeout-ms", "5000"])
+            # Allow overriding via environment variables for live smoke determinism
+            max_msgs = os.environ.get("AGENT_REGISTRY_CONSUMER_MAX_MESSAGES", "1")
+            timeout_ms = os.environ.get("AGENT_REGISTRY_CONSUMER_TIMEOUT_MS", "5000")
+            try:
+                max_msgs_int = int(max_msgs)
+            except Exception:
+                max_msgs_int = 1
+            try:
+                timeout_ms_int = int(timeout_ms)
+            except Exception:
+                timeout_ms_int = 5000
+            cmd.extend(["--max-messages", str(max_msgs_int), "--timeout-ms", str(timeout_ms_int)])
 
         backoff = 1
         while True:

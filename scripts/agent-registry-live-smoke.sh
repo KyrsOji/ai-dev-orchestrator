@@ -10,10 +10,27 @@ TMP_DIR="$(mktemp -d --tmpdir agent-registry-live-XXXX)"
 STORAGE_FILE="$TMP_DIR/registry.json"
 LOG_FILE="$TMP_DIR/registry.log"
 
+# PIDs (initialized for set -u safety)
+REG_PID=""
+REAPER_PID=""
+
+
 echo "Using tmp dir: $TMP_DIR"
 # Run mode: smoke (bounded) or service (long-running)
 AGENT_REGISTRY_RUN_MODE="${AGENT_REGISTRY_RUN_MODE:-smoke}"
 echo "Run mode: ${AGENT_REGISTRY_RUN_MODE} (smoke=bounded, service=long-running)"
+
+# For smoke tests, defer starting the consumer until after we publish a unique heartbeat
+DEFER_START_CONSUMER=false
+if [[ "${AGENT_REGISTRY_RUN_MODE:-smoke}" == "smoke" ]]; then
+  DEFER_START_CONSUMER=true
+  # Use a unique consumer group for smoke runs so committed offsets do not affect consumption
+  export AGENT_REGISTRY_CONSUMER_GROUP="ai-dev-agent-registry-group-$(date +%s)-$RANDOM"
+  # Allow scanning more messages when running live against a topic with backlog
+  export AGENT_REGISTRY_CONSUMER_MAX_MESSAGES="${AGENT_REGISTRY_CONSUMER_MAX_MESSAGES:-1000}"
+  export AGENT_REGISTRY_CONSUMER_TIMEOUT_MS="${AGENT_REGISTRY_CONSUMER_TIMEOUT_MS:-5000}"
+fi
+
 
 : "Ensure KAFKA_BOOTSTRAP is set"
 : "KAFKA_CLIENT_CONFIG may be set for mTLS"
@@ -29,17 +46,21 @@ if [[ -z "$PRODUCER_CMD" ]]; then
 fi
 
 # Start registry consumer in background (consumes from Kafka)
-if [[ "${AGENT_REGISTRY_RUN_MODE:-smoke}" == "service" ]]; then
-  # Service mode: long-running consumer (no internal timeout)
-  python3 -m registry.consumer --storage "$STORAGE_FILE" --topic ai.dev.agent.status --from-beginning --run-mode "$AGENT_REGISTRY_RUN_MODE" > "$LOG_FILE" 2>&1 &
-  REG_PID=$!
+if [[ "${DEFER_START_CONSUMER:-false}" != "true" ]]; then
+  if [[ "${AGENT_REGISTRY_RUN_MODE:-smoke}" == "service" ]]; then
+    # Service mode: long-running consumer (no internal timeout)
+    python3 -m registry.consumer --storage "$STORAGE_FILE" --topic ai.dev.agent.status --from-beginning --run-mode "$AGENT_REGISTRY_RUN_MODE" > "$LOG_FILE" 2>&1 &
+    REG_PID=$!
+  else
+    # Smoke mode: bounded consumer using timeout and a reaper (bounded 60s)
+    timeout --kill-after=5s 60s python3 -m registry.consumer --storage "$STORAGE_FILE" --topic ai.dev.agent.status --from-beginning --run-mode "$AGENT_REGISTRY_RUN_MODE" > "$LOG_FILE" 2>&1 &
+    REG_PID=$!
+    # Reaper to ensure the consumer is killed if timeout fails to stop it
+    ( sleep 65; echo "Reaper: killing registry consumer pid $REG_PID"; kill -TERM "$REG_PID" 2>/dev/null || true; sleep 2; kill -KILL "$REG_PID" 2>/dev/null || true ) &
+    REAPER_PID=$!
+  fi
 else
-  # Smoke mode: bounded consumer using timeout and a reaper (bounded 60s)
-  timeout --kill-after=5s 60s python3 -m registry.consumer --storage "$STORAGE_FILE" --topic ai.dev.agent.status --from-beginning --run-mode "$AGENT_REGISTRY_RUN_MODE" > "$LOG_FILE" 2>&1 &
-  REG_PID=$!
-  # Reaper to ensure the consumer is killed if timeout fails to stop it
-  ( sleep 65; echo "Reaper: killing registry consumer pid $REG_PID"; kill -TERM "$REG_PID" 2>/dev/null || true; sleep 2; kill -KILL "$REG_PID" 2>/dev/null || true ) &
-  REAPER_PID=$!
+  echo "Deferring consumer start until after publish (smoke mode)"
 fi
 
 echo "Started registry consumer pid=$REG_PID (logs -> $LOG_FILE)"
@@ -85,15 +106,28 @@ MAX_WAIT=20
 SLEEP=1
 WAITED=0
 FOUND=0
+
+# If we deferred starting the consumer (smoke mode), start it now to consume from beginning
+if [[ "${DEFER_START_CONSUMER:-false}" == "true" ]]; then
+  echo "Starting deferred registry consumer (smoke mode) after publish"
+  timeout --kill-after=5s 60s python3 -m registry.consumer --storage "$STORAGE_FILE" --topic ai.dev.agent.status --from-beginning --run-mode "$AGENT_REGISTRY_RUN_MODE" > "$LOG_FILE" 2>&1 &
+  REG_PID=$!
+  # Reaper to ensure the consumer is killed if timeout fails to stop it
+  ( sleep 65; echo "Reaper: killing registry consumer pid $REG_PID"; kill -TERM "$REG_PID" 2>/dev/null || true; sleep 2; kill -KILL "$REG_PID" 2>/dev/null || true ) &
+  REAPER_PID=$!
+fi
+
 while [[ "$WAITED" -lt "$MAX_WAIT" ]]; do
   if python3 - <<PY
-import json
+import json, sys
 try:
-  s=json.load(open('$STORAGE_FILE'))
+    s = json.load(open('$STORAGE_FILE'))
 except Exception:
-  print('')
-  raise SystemExit(2)
-print('$AGENT_ID' in s)
+    sys.exit(2)
+if '$AGENT_ID' in s:
+    sys.exit(0)
+else:
+    sys.exit(1)
 PY
   then
     FOUND=1
