@@ -108,11 +108,14 @@ class KafkaClient:
             stdout = proc.stdout or ""
             stderr = proc.stderr or ""
             if proc.returncode != 0 and not stdout:
-                return None, {"error": "kafka_cli_nonzero_exit", "rc": proc.returncode, "stderr": stderr.strip(), "cmd": cmd}
-            parsed = _parse_first_json_from_text(stdout)
-            if not parsed:
-                return None, {"error": "json_parse_error", "raw_stdout": stdout.strip(), "stderr": stderr.strip(), "cmd": cmd}
-            return parsed, {"used_cli": True, "cmd": cmd}
+                # CLI failed without producing stdout; fall back to python client for robustness
+                logger.debug("Consumer CLI failed (rc=%s); stderr=%s; falling back to python client", proc.returncode, stderr.strip())
+            else:
+                parsed = _parse_first_json_from_text(stdout)
+                if parsed:
+                    return parsed, {"used_cli": True, "cmd": cmd}
+                # No JSON parsed from CLI output; fall back to python client
+                logger.debug("Consumer CLI returned no JSON; stdout=%s stderr=%s; falling back to python client", stdout.strip(), stderr.strip())
 
         try:
             import importlib
