@@ -14,6 +14,8 @@ import logging
 import os
 from dataclasses import dataclass, asdict
 from typing import Any, Dict, List, Optional
+import time
+
 
 from matrix_bridge.kafka_client import KafkaClient
 
