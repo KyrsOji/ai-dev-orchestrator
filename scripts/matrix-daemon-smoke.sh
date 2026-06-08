@@ -73,15 +73,31 @@ fi
 TMPLOG=$(mktemp)
 trap 'rc=$?; echo "Cleaning up..."; if [ -n "${BRIDGE_PID:-}" ]; then kill "$BRIDGE_PID" 2>/dev/null || true; fi; rm -f "$TMPLOG"; exit "$rc"' EXIT
 
-env MATRIX_MODE=real MATRIX_HOMESERVER_URL="$HOMESERVER" MATRIX_ACCESS_TOKEN="$TOKEN" MATRIX_ROOM_ID="$ROOM_ID" $PYTHON -m matrix_bridge.bridge --daemon --matrix-mode real >"$TMPLOG" 2>&1 &
+env MATRIX_MODE=real MATRIX_HOMESERVER_URL="$HOMESERVER" MATRIX_ACCESS_TOKEN="$TOKEN" MATRIX_ROOM_ID="$ROOM_ID" KAFKA_BOOTSTRAP="$BOOTSTRAP" KAFKA_CLIENT_CONFIG="$CLIENT_CONFIG" $PYTHON -m matrix_bridge.bridge --daemon --matrix-mode real >"$TMPLOG" 2>&1 &
 BRIDGE_PID=$!
 
-# Wait a short while for the daemon to start
-sleep 2
+# Wait for the daemon to print its startup line
+TRIES=0
+MAX_TRIES=20
+while [ $TRIES -lt $MAX_TRIES ]; do
+  if grep -q "Starting daemon to consume topic=" "$TMPLOG"; then
+    break
+  fi
+  if ! kill -0 "$BRIDGE_PID" 2>/dev/null; then
+    echo "Bridge daemon failed to start; see $TMPLOG" >&2
+    cat "$TMPLOG" >&2 || true
+    exit 3
+  fi
+  TRIES=$((TRIES+1))
+  sleep 0.5
+done
 
-if ! kill -0 "$BRIDGE_PID" 2>/dev/null; then
-  echo "Bridge daemon failed to start; see $TMPLOG" >&2
+if [ $TRIES -ge $MAX_TRIES ]; then
+  echo "Timed out waiting for daemon to be ready; see $TMPLOG" >&2
   cat "$TMPLOG" >&2 || true
+  kill "$BRIDGE_PID" || true
+  wait "$BRIDGE_PID" 2>/dev/null || true
+  rm -f "$TMPLOG"
   exit 3
 fi
 

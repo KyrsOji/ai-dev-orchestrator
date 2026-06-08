@@ -302,6 +302,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         try:
             while True:
                 try:
+                    logger.info("Attempting to consume one message from topic=%s (timeout=%s, from_beginning=%s)", topic, max(1, args.timeout), False)
                     msg, meta = kafka.consume_one(topic=topic, timeout_s=max(1, args.timeout), from_beginning=False)
                 except SystemExit:
                     raise
@@ -312,9 +313,25 @@ def main(argv: Optional[List[str]] = None) -> int:
 
                 if msg is None:
                     # no message within timeout
+                    logger.info("No message received from consume_one; meta=%s", meta)
+                    # If available, show the CLI command used for diagnosis (do not print credentials)
+                    if isinstance(meta, dict) and meta.get('cmd'):
+                        try:
+                            cmd = meta.get('cmd')
+                            if isinstance(cmd, list):
+                                logger.info("Consumer CLI command: %s", " ".join(cmd))
+                            else:
+                                logger.info("Consumer CLI command: %s", str(cmd))
+                        except Exception:
+                            pass
+                    # Brief sleep to avoid busy looping
+                    time.sleep(0.1)
                     continue
 
                 try:
+                    # Log safe fields from the message (taskId)
+                    task_id = msg.get('taskId') if isinstance(msg, dict) else None
+                    logger.info("Received message from topic=%s taskId=%s; processing...", topic, task_id)
                     resp = bridge.process_approval_request(msg, wait_seconds=args.wait_seconds)
                     # Print a short summary to stdout for scripts to inspect
                     print(f"[BRIDGE] processed task={msg.get('taskId')} decision={resp.decision}")
