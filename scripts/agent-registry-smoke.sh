@@ -16,6 +16,11 @@ echo "Using tmp dir: $TMP_DIR"
 AGENT_REGISTRY_MODE="${AGENT_REGISTRY_MODE:-file}"
 # Run mode: smoke (bounded) or service (long-running)
 AGENT_REGISTRY_RUN_MODE="${AGENT_REGISTRY_RUN_MODE:-smoke}"
+# If running in file mode, pick a unique expected agent id for the fake-tail smoke validation
+if [[ "${AGENT_REGISTRY_MODE}" != "kafka" ]]; then
+  AGENT_ID="agent-registry-smoke-$(date +%s)"
+  export AGENT_REGISTRY_EXPECT_AGENT_ID="$AGENT_ID"
+fi
 if [[ "$AGENT_REGISTRY_MODE" == "kafka" ]]; then
   echo "Running agent-registry smoke in KAFKA mode"
   if [[ -z "${KAFKA_BOOTSTRAP:-}" ]]; then
@@ -65,7 +70,7 @@ if [[ "${AGENT_REGISTRY_RUN_MODE:-smoke}" == "service" ]]; then
   REG_PID=$!
 else
   # Smoke mode: bounded consumer using timeout and a reaper
-  timeout --kill-after=5s 30s python3 -m registry consume --storage "$STORAGE_FILE" --file-path "$HEARTBEAT_FILE" --run-mode "$AGENT_REGISTRY_RUN_MODE" > "$TMP_DIR/registry.log" 2>&1 &
+  timeout --kill-after=5s 30s python3 -m registry consume --storage "$STORAGE_FILE" --file-path "$HEARTBEAT_FILE" --run-mode "$AGENT_REGISTRY_RUN_MODE" --expect-agent-id "$AGENT_REGISTRY_EXPECT_AGENT_ID" > "$TMP_DIR/registry.log" 2>&1 &
   REG_PID=$!
   # Reaper to ensure the consumer is killed if timeout fails to stop it
   ( sleep 35; echo "Reaper: killing registry consumer pid $REG_PID"; kill -TERM "$REG_PID" 2>/dev/null || true; sleep 2; kill -KILL "$REG_PID" 2>/dev/null || true ) &
@@ -95,18 +100,25 @@ print(datetime.utcnow().replace(tzinfo=timezone.utc).isoformat().replace('+00:00
 PY
 )"
 
-AGENT_ID="ofbiz-dev-01"
 HOSTNAME="test-host"
-ROLES="[\"ofbiz\", \"java\"]"
+ROLES='["ofbiz", "java"]'
 
 PAYLOAD=$(cat <<EOF
 {"agentId": "$AGENT_ID", "hostname": "$HOSTNAME", "roles": ["ofbiz","java"], "status": "idle", "cpuCount": 4, "memoryGb": 8.0, "diskFreeGb": 100.0, "loadAverage": 0.12, "lastSeen": "$TIMESTAMP"}
 EOF
 )
-# Append to heartbeat file (newline-delimited JSON)
+# Append noise, an unrelated heartbeat, then the expected heartbeat (newline-delimited JSON)
+echo "this-is-not-json" >> "$HEARTBEAT_FILE"
+OTHER_ID="other-$(date +%s)-$RANDOM"
+OTHER_PAYLOAD=$(cat <<EOF
+{"agentId": "$OTHER_ID", "hostname": "other-host", "roles": ["ofbiz"], "status": "idle", "cpuCount": 1, "memoryGb": 1.0, "diskFreeGb": 10.0, "loadAverage": 0.0, "lastSeen": "$TIMESTAMP"}
+EOF
+)
+echo "$OTHER_PAYLOAD" >> "$HEARTBEAT_FILE"
+# Now append the expected heartbeat we generated earlier
 echo "$PAYLOAD" >> "$HEARTBEAT_FILE"
 
-# Wait for consumer to pick it up
+# Wait a bit for consumer to pick it up (the consumer should exit immediately after expected heartbeat)
 sleep 1
 
 # Now run CLI to list agents

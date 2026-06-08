@@ -27,7 +27,7 @@ if [[ "${AGENT_REGISTRY_RUN_MODE:-smoke}" == "smoke" ]]; then
   # Use a unique consumer group for smoke runs so committed offsets do not affect consumption
   export AGENT_REGISTRY_CONSUMER_GROUP="ai-dev-agent-registry-group-$(date +%s)-$RANDOM"
   # Allow scanning more messages when running live against a topic with backlog
-  export AGENT_REGISTRY_CONSUMER_MAX_MESSAGES="${AGENT_REGISTRY_CONSUMER_MAX_MESSAGES:-1000}"
+  export AGENT_REGISTRY_CONSUMER_MAX_MESSAGES="${AGENT_REGISTRY_CONSUMER_MAX_MESSAGES:-50}"
   export AGENT_REGISTRY_CONSUMER_TIMEOUT_MS="${AGENT_REGISTRY_CONSUMER_TIMEOUT_MS:-5000}"
 fi
 
@@ -53,7 +53,7 @@ if [[ "${DEFER_START_CONSUMER:-false}" != "true" ]]; then
     REG_PID=$!
   else
     # Smoke mode: bounded consumer using timeout and a reaper (bounded 60s)
-    timeout --kill-after=5s 60s python3 -m registry.consumer --storage "$STORAGE_FILE" --topic ai.dev.agent.status --from-beginning --run-mode "$AGENT_REGISTRY_RUN_MODE" > "$LOG_FILE" 2>&1 &
+    timeout --kill-after=5s 60s python3 -m registry.consumer --storage "$STORAGE_FILE" --topic ai.dev.agent.status --from-beginning --run-mode "$AGENT_REGISTRY_RUN_MODE" --expect-agent-id "$AGENT_REGISTRY_EXPECT_AGENT_ID" > "$LOG_FILE" 2>&1 &
     REG_PID=$!
     # Reaper to ensure the consumer is killed if timeout fails to stop it
     ( sleep 65; echo "Reaper: killing registry consumer pid $REG_PID"; kill -TERM "$REG_PID" 2>/dev/null || true; sleep 2; kill -KILL "$REG_PID" 2>/dev/null || true ) &
@@ -88,6 +88,7 @@ print(datetime.utcnow().replace(tzinfo=timezone.utc).isoformat().replace('+00:00
 PY
 )"
 AGENT_ID="agent-registry-live-$(date +%s)"
+export AGENT_REGISTRY_EXPECT_AGENT_ID="$AGENT_ID"
 PAYLOAD=$(cat <<EOF
 {"agentId": "$AGENT_ID", "hostname": "live-smoke-host", "roles": ["ofbiz","java"], "status": "idle", "cpuCount": 2, "memoryGb": 4.0, "diskFreeGb": 20.0, "loadAverage": 0.01, "lastSeen": "$TIMESTAMP"}
 EOF
@@ -110,7 +111,7 @@ FOUND=0
 # If we deferred starting the consumer (smoke mode), start it now to consume from beginning
 if [[ "${DEFER_START_CONSUMER:-false}" == "true" ]]; then
   echo "Starting deferred registry consumer (smoke mode) after publish"
-  timeout --kill-after=5s 60s python3 -m registry.consumer --storage "$STORAGE_FILE" --topic ai.dev.agent.status --from-beginning --run-mode "$AGENT_REGISTRY_RUN_MODE" > "$LOG_FILE" 2>&1 &
+  timeout --kill-after=5s 60s python3 -m registry.consumer --storage "$STORAGE_FILE" --topic ai.dev.agent.status --from-beginning --run-mode "$AGENT_REGISTRY_RUN_MODE" --expect-agent-id "$AGENT_REGISTRY_EXPECT_AGENT_ID" > "$LOG_FILE" 2>&1 &
   REG_PID=$!
   # Reaper to ensure the consumer is killed if timeout fails to stop it
   ( sleep 65; echo "Reaper: killing registry consumer pid $REG_PID"; kill -TERM "$REG_PID" 2>/dev/null || true; sleep 2; kill -KILL "$REG_PID" 2>/dev/null || true ) &

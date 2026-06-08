@@ -58,6 +58,7 @@ def main(argv: Optional[list] = None) -> int:
     p_consume.add_argument("--topic", default="ai.dev.agent.status", help="Kafka topic to consume")
     p_consume.add_argument("--from-beginning", action="store_true", help="If set, consumer will request from-beginning on startup (useful for initial population)")
     p_consume.add_argument("--run-mode", choices=("service", "smoke"), default=os.environ.get("AGENT_REGISTRY_RUN_MODE", "service"), help="Run mode: 'service' (persistent) or 'smoke' (bounded)")
+    p_consume.add_argument("--expect-agent-id", default=os.environ.get("AGENT_REGISTRY_EXPECT_AGENT_ID"), help="Optional expected agent id to wait for (smoke mode only)")
 
     args = parser.parse_args(argv)
 
@@ -76,6 +77,9 @@ def main(argv: Optional[list] = None) -> int:
             cons_args.append("--from-beginning")
         # Forward run-mode (service|smoke) to the consumer implementation
         cons_args.extend(["--run-mode", args.run_mode])
+        # Forward expect-agent-id if provided
+        if getattr(args, 'expect_agent_id', None):
+            cons_args.extend(["--expect-agent-id", args.expect_agent_id])
         return consumer_main(cons_args)
 
     parser.print_help()

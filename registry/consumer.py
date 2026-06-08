@@ -31,6 +31,7 @@ import threading
 from typing import Optional
 
 from registry.service import AgentRegistry
+from registry.schema import AgentStatus
 
 logger = logging.getLogger(__name__)
 
@@ -72,7 +73,15 @@ def tail_file(path: str, callback, poll_interval: float = 0.5):
             except Exception:
                 logger.exception("Failed to parse JSON line: %s", line)
                 continue
-            callback(payload)
+            try:
+                # If callback returns truthy, stop tailing and return
+                should_stop = callback(payload)
+                if should_stop:
+                    logger.info("tail_file: callback requested stop; exiting tail loop")
+                    return
+            except Exception:
+                logger.exception("Error in heartbeat callback; continuing")
+                continue
 
 
 def _find_consumer_cli() -> Optional[str]:
@@ -92,7 +101,7 @@ def _read_and_log_stream(stream, level=logging.INFO):
     stream.close()
 
 
-def consume_kafka_persistent(topic: str, registry: AgentRegistry, *, timeout_s: int = 5, from_beginning: bool = False, run_mode: str = "service") -> None:
+def consume_kafka_persistent(topic: str, registry: AgentRegistry, *, timeout_s: int = 5, from_beginning: bool = False, run_mode: str = "service", expected_agent_id: Optional[str] = None) -> None:
     """Long-running consumer that ingests JSON heartbeats into the registry.
 
     Strategy:
@@ -112,6 +121,10 @@ def consume_kafka_persistent(topic: str, registry: AgentRegistry, *, timeout_s: 
     client_config = os.environ.get("KAFKA_CLIENT_CONFIG")
     group = os.environ.get("AGENT_REGISTRY_CONSUMER_GROUP", "ai-dev-agent-registry-group")
 
+    run_mode_norm = (run_mode or os.environ.get("AGENT_REGISTRY_RUN_MODE", "service")).lower()
+    if run_mode_norm not in ("service", "smoke"):
+        run_mode_norm = "service"
+
     consumer_cli = _find_consumer_cli()
 
     # If CLI available, use it so KAFKA_CLIENT_CONFIG (Java client properties)
@@ -125,9 +138,6 @@ def consume_kafka_persistent(topic: str, registry: AgentRegistry, *, timeout_s: 
         if client_config:
             cmd.extend(["--consumer.config", client_config])
         # In smoke run mode, bound the CLI itself with --max-messages and --timeout-ms
-        run_mode_norm = (run_mode or os.environ.get("AGENT_REGISTRY_RUN_MODE", "service")).lower()
-        if run_mode_norm not in ("service", "smoke"):
-            run_mode_norm = "service"
         if run_mode_norm == "smoke":
             # limit messages and add an internal consumer timeout to ensure CLI exits
             # Allow overriding via environment variables for live smoke determinism
@@ -169,12 +179,30 @@ def consume_kafka_persistent(topic: str, registry: AgentRegistry, *, timeout_s: 
                         registry.ingest_heartbeat(payload)
                     except Exception:
                         logger.exception("Failed to ingest heartbeat")
+                    # If smoke mode and expected agent specified, exit early when observed
+                    if run_mode_norm == "smoke" and expected_agent_id:
+                        try:
+                            agent_id = None
+                            try:
+                                st = AgentStatus.from_dict(payload)
+                                agent_id = st.agentId
+                            except Exception:
+                                agent_id = payload.get("agentId")
+                            if agent_id == expected_agent_id:
+                                logger.info("Expected agent '%s' observed in CLI consumer; persisting and exiting", expected_agent_id)
+                                try:
+                                    os.killpg(proc.pid, signal.SIGTERM)
+                                except Exception:
+                                    try:
+                                        proc.kill()
+                                    except Exception:
+                                        pass
+                                return
+                        except Exception:
+                            logger.exception("Error while checking expected agent id")
 
                 # If we exit the loop, process likely terminated
                 rc = proc.poll()
-                run_mode_norm = (run_mode or os.environ.get("AGENT_REGISTRY_RUN_MODE", "service")).lower()
-                if run_mode_norm not in ("service", "smoke"):
-                    run_mode_norm = "service"
                 # If in smoke/test mode and the consumer exited cleanly (rc == 0),
                 # treat as successful completion and return to caller (no restart).
                 if run_mode_norm == "smoke" and rc == 0:
@@ -234,6 +262,24 @@ def consume_kafka_persistent(topic: str, registry: AgentRegistry, *, timeout_s: 
                     txt = str(val)
                 payload = json.loads(txt)
                 registry.ingest_heartbeat(payload)
+                # If smoke mode and expected agent specified, exit early when observed
+                if run_mode_norm == "smoke" and expected_agent_id:
+                    try:
+                        agent_id = None
+                        try:
+                            st = AgentStatus.from_dict(payload)
+                            agent_id = st.agentId
+                        except Exception:
+                            agent_id = payload.get("agentId")
+                        if agent_id == expected_agent_id:
+                            logger.info("Expected agent '%s' observed in kafka-python consumer; persisting and exiting", expected_agent_id)
+                            try:
+                                consumer.close()
+                            except Exception:
+                                pass
+                            return
+                    except Exception:
+                        logger.exception("Error while checking expected agent id")
             except Exception:
                 logger.exception("Failed to parse/ingest message from kafka-python consumer")
     except ImportError:
@@ -249,6 +295,7 @@ def main(argv: Optional[list] = None) -> int:
     parser.add_argument("--timeout", type=int, default=5, help="Kafka consume timeout s (unused for persistent consumer)")
     parser.add_argument("--from-beginning", action="store_true", help="If set, consume from beginning on first start (useful for initial population)")
     parser.add_argument("--run-mode", choices=("service","smoke"), default=os.environ.get("AGENT_REGISTRY_RUN_MODE","service"), help="Run mode: 'service' (persistent) or 'smoke' (bounded)")
+    parser.add_argument("--expect-agent-id", default=os.environ.get("AGENT_REGISTRY_EXPECT_AGENT_ID"), help="Expected agent ID to wait for (smoke mode only)")
 
     args = parser.parse_args(argv)
     registry = AgentRegistry(storage_path=args.storage)
@@ -261,13 +308,34 @@ def main(argv: Optional[list] = None) -> int:
             # create empty file
             open(args.file_path, "a").close()
         try:
-            tail_file(args.file_path, lambda payload: registry.ingest_heartbeat(payload))
+            def _on_payload(payload):
+                try:
+                    registry.ingest_heartbeat(payload)
+                except Exception:
+                    logger.exception("Failed to ingest heartbeat (file-tail)")
+                # If smoke mode and expected agent is set, return True to stop tailing when seen
+                if args.run_mode == "smoke" and args.expect_agent_id:
+                    try:
+                        agent_id = None
+                        try:
+                            st = AgentStatus.from_dict(payload)
+                            agent_id = st.agentId
+                        except Exception:
+                            agent_id = payload.get("agentId")
+                        if agent_id == args.expect_agent_id:
+                            logger.info("Expected agent '%s' observed in file-tail; persisting and exiting", args.expect_agent_id)
+                            return True
+                    except Exception:
+                        logger.exception("Error while checking expected agent id")
+                return False
+
+            tail_file(args.file_path, _on_payload)
         except KeyboardInterrupt:
             logger.info("Stopping file-tail consumer")
             return 0
     else:
         try:
-            consume_kafka_persistent(args.topic, registry, timeout_s=args.timeout, from_beginning=args.from_beginning, run_mode=args.run_mode)
+            consume_kafka_persistent(args.topic, registry, timeout_s=args.timeout, from_beginning=args.from_beginning, run_mode=args.run_mode, expected_agent_id=args.expect_agent_id)
         except KeyboardInterrupt:
             logger.info("Stopping kafka consumer")
             return 0
