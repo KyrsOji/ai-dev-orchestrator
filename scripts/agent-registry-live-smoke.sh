@@ -16,6 +16,22 @@ REAPER_PID=""
 
 
 echo "Using tmp dir: $TMP_DIR"
+
+# Build a unique heartbeat payload early so we can pass EXPECT_AGENT_ID to the consumer
+TIMESTAMP="$(python3 - <<'PY'
+from datetime import datetime, timezone
+print(datetime.utcnow().replace(tzinfo=timezone.utc).isoformat().replace('+00:00','Z'))
+PY
+)"
+AGENT_ID="agent-registry-live-$(date +%s)"
+export AGENT_REGISTRY_EXPECT_AGENT_ID="$AGENT_ID"
+PAYLOAD=$(cat <<EOF
+{"agentId": "$AGENT_ID", "hostname": "live-smoke-host", "roles": ["ofbiz","java"], "status": "idle", "cpuCount": 2, "memoryGb": 4.0, "diskFreeGb": 20.0, "loadAverage": 0.01, "lastSeen": "$TIMESTAMP"}
+EOF
+)
+
+echo "Prepared heartbeat AGENT_ID=$AGENT_ID"
+
 # Run mode: smoke (bounded) or service (long-running)
 AGENT_REGISTRY_RUN_MODE="${AGENT_REGISTRY_RUN_MODE:-smoke}"
 echo "Run mode: ${AGENT_REGISTRY_RUN_MODE} (smoke=bounded, service=long-running)"
@@ -80,19 +96,8 @@ trap cleanup_registry_consumer EXIT
 # Give consumer time to start
 sleep 2
 
-# Build a unique heartbeat payload
-TIMESTAMP="$(python3 - <<'PY'
-from datetime import datetime, timezone
-print(datetime.utcnow().replace(tzinfo=timezone.utc).isoformat().replace('+00:00','Z'))
-PY
-)"
-AGENT_ID="agent-registry-live-$(date +%s)"
-export AGENT_REGISTRY_EXPECT_AGENT_ID="$AGENT_ID"
-PAYLOAD=$(cat <<EOF
-{"agentId": "$AGENT_ID", "hostname": "live-smoke-host", "roles": ["ofbiz","java"], "status": "idle", "cpuCount": 2, "memoryGb": 4.0, "diskFreeGb": 20.0, "loadAverage": 0.01, "lastSeen": "$TIMESTAMP"}
-EOF
-)
 
+# Publish the prepared heartbeat now that the consumer is listening
 echo "Publishing heartbeat AGENT_ID=$AGENT_ID to ai.dev.agent.status"
 # Use producer with client config if set
 if [[ -n "${KAFKA_CLIENT_CONFIG:-}" ]]; then
@@ -100,6 +105,7 @@ if [[ -n "${KAFKA_CLIENT_CONFIG:-}" ]]; then
 else
   echo "$PAYLOAD" | "$PRODUCER_CMD" --bootstrap-server "$KAFKA_BOOTSTRAP" --topic ai.dev.agent.status
 fi
+
 
 # Wait up to 20s for registry to observe the heartbeat
 MAX_WAIT=20
