@@ -12,6 +12,8 @@ import logging
 import sys
 from datetime import datetime, timezone
 from typing import Optional
+import os
+
 
 from registry.service import AgentRegistry
 
@@ -54,6 +56,8 @@ def main(argv: Optional[list] = None) -> int:
     p_consume.add_argument("--storage", default="/tmp/ai-dev-agent-registry.json", help="Path to registry storage file")
     p_consume.add_argument("--file-path", help="Tail a file for heartbeat JSON lines (useful for smoke tests)")
     p_consume.add_argument("--topic", default="ai.dev.agent.status", help="Kafka topic to consume")
+    p_consume.add_argument("--from-beginning", action="store_true", help="If set, consumer will request from-beginning on startup (useful for initial population)")
+    p_consume.add_argument("--run-mode", choices=("service", "smoke"), default=os.environ.get("AGENT_REGISTRY_RUN_MODE", "service"), help="Run mode: 'service' (persistent) or 'smoke' (bounded)")
 
     args = parser.parse_args(argv)
 
@@ -68,6 +72,10 @@ def main(argv: Optional[list] = None) -> int:
         if args.file_path:
             cons_args.extend(["--file-path", args.file_path])
         cons_args.extend(["--topic", args.topic])
+        if getattr(args, 'from_beginning', False):
+            cons_args.append("--from-beginning")
+        # Forward run-mode (service|smoke) to the consumer implementation
+        cons_args.extend(["--run-mode", args.run_mode])
         return consumer_main(cons_args)
 
     parser.print_help()

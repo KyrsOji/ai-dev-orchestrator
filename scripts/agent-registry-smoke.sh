@@ -61,11 +61,11 @@ fi
 # Redirect output to log
 if [[ "${AGENT_REGISTRY_RUN_MODE:-smoke}" == "service" ]]; then
   # Service mode: long-running consumer (no internal timeout)
-  python3 -m registry consume --storage "$STORAGE_FILE" --file-path "$HEARTBEAT_FILE" > "$TMP_DIR/registry.log" 2>&1 &
+  python3 -m registry consume --storage "$STORAGE_FILE" --file-path "$HEARTBEAT_FILE" --run-mode "$AGENT_REGISTRY_RUN_MODE" > "$TMP_DIR/registry.log" 2>&1 &
   REG_PID=$!
 else
   # Smoke mode: bounded consumer using timeout and a reaper
-  timeout --kill-after=5s 30s python3 -m registry consume --storage "$STORAGE_FILE" --file-path "$HEARTBEAT_FILE" > "$TMP_DIR/registry.log" 2>&1 &
+  timeout --kill-after=5s 30s python3 -m registry consume --storage "$STORAGE_FILE" --file-path "$HEARTBEAT_FILE" --run-mode "$AGENT_REGISTRY_RUN_MODE" > "$TMP_DIR/registry.log" 2>&1 &
   REG_PID=$!
   # Reaper to ensure the consumer is killed if timeout fails to stop it
   ( sleep 35; echo "Reaper: killing registry consumer pid $REG_PID"; kill -TERM "$REG_PID" 2>/dev/null || true; sleep 2; kill -KILL "$REG_PID" 2>/dev/null || true ) &

@@ -1,7 +1,20 @@
 """Consumer that updates AgentRegistry from ai.dev.agent.status topic or a tail file.
 
-If --file-path is provided, the consumer tails the file for newline-delimited JSON
-heartbeats (useful for smoke tests). Otherwise it consumes from Kafka.
+This module implements a production-safe, long-running Kafka consumer.
+Behavior:
+- If --file-path is provided, tail that file (unchanged behavior for smoke tests).
+- Otherwise, prefer a long-running kafka-console-consumer subprocess (so existing
+  KAFKA_CLIENT_CONFIG Java-style properties continue to work with mTLS) and
+  fall back to kafka-python if the CLI is unavailable and kafka-python is
+  installed AND no KAFKA_CLIENT_CONFIG is set.
+
+Design choices:
+- Persistent consumer process (not repeated one-shot CLI calls) to avoid
+  frequent startup/shutdown and ConsoleConsumer TimeoutException observed when
+  using short-lived invocations.
+- Use a consumer group so offsets are managed by the broker.
+- Default offset behavior: start from latest (do not replay history) unless
+  --from-beginning is provided.
 """
 from __future__ import annotations
 
@@ -10,21 +23,40 @@ import io
 import json
 import logging
 import os
+import shutil
+import subprocess
+import signal
 import time
+import threading
 from typing import Optional
 
 from registry.service import AgentRegistry
 
-try:
-    from matrix_bridge.kafka_client import KafkaClient
-except Exception:
-    KafkaClient = None  # type: ignore
-
 logger = logging.getLogger(__name__)
 
 
+def _parse_first_json_from_text(text: str) -> Optional[dict]:
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            return json.loads(line)
+        except Exception:
+            continue
+    start = text.find("{")
+    end = text.rfind("}")
+    if start != -1 and end != -1 and end > start:
+        snippet = text[start : end + 1]
+        try:
+            return json.loads(snippet)
+        except Exception:
+            return None
+    return None
+
+
 def tail_file(path: str, callback, poll_interval: float = 0.5):
-    # Open file and seek to end, then read newlines
+    # Open file and seek to end, then read newlines (existing behavior)
     with open(path, "r", encoding="utf-8") as fh:
         fh.seek(0, io.SEEK_END)
         while True:
@@ -43,18 +75,159 @@ def tail_file(path: str, callback, poll_interval: float = 0.5):
             callback(payload)
 
 
-def consume_kafka(topic: str, registry: AgentRegistry, timeout_s: int = 5):
-    if KafkaClient is None:
-        logger.error("KafkaClient not available; cannot consume from Kafka")
+def _find_consumer_cli() -> Optional[str]:
+    for name in ("kafka-console-consumer.sh", "kafka-console-consumer"):
+        path = shutil.which(name)
+        if path:
+            return path
+    return None
+
+
+def _read_and_log_stream(stream, level=logging.INFO):
+    # Helper: read a process stream line-by-line and log it
+    for ln in iter(stream.readline, ""):
+        ln = ln.rstrip("\n")
+        if ln:
+            logger.log(level, "kafka-consumer-cli: %s", ln)
+    stream.close()
+
+
+def consume_kafka_persistent(topic: str, registry: AgentRegistry, *, timeout_s: int = 5, from_beginning: bool = False, run_mode: str = "service") -> None:
+    """Long-running consumer that ingests JSON heartbeats into the registry.
+
+    Strategy:
+    - Prefer the kafka-console-consumer CLI (so Java-style client config files
+      including mTLS keystore/truststore work without conversion).
+    - If CLI is not available and kafka-python is installed and no
+      KAFKA_CLIENT_CONFIG is set, use kafka-python for a persistent consumer.
+
+    Behavior:
+    - In 'service' run_mode (default) the function will restart the consumer on any exit
+      with an exponential backoff (intended for long-running production processes).
+    - In 'smoke' run_mode the function treats a clean exit (rc == 0) as success and
+      returns to the caller; non-zero exits are treated as failures and trigger restart
+      with exponential backoff (intended for bounded smoke/test runs).
+    """
+    bootstrap = os.environ.get("KAFKA_BOOTSTRAP", "kafka.yahlife.com:9095")
+    client_config = os.environ.get("KAFKA_CLIENT_CONFIG")
+    group = os.environ.get("AGENT_REGISTRY_CONSUMER_GROUP", "ai-dev-agent-registry-group")
+
+    consumer_cli = _find_consumer_cli()
+
+    # If CLI available, use it so KAFKA_CLIENT_CONFIG (Java client properties)
+    # can be passed through directly.
+    if consumer_cli:
+        logger.info("Using kafka-console-consumer CLI for persistent consumption")
+        # Build base command
+        cmd = [consumer_cli, "--bootstrap-server", bootstrap, "--topic", topic, "--group", group]
+        if from_beginning:
+            cmd.append("--from-beginning")
+        if client_config:
+            cmd.extend(["--consumer.config", client_config])
+        # In smoke run mode, bound the CLI itself with --max-messages and --timeout-ms
+        run_mode_norm = (run_mode or os.environ.get("AGENT_REGISTRY_RUN_MODE", "service")).lower()
+        if run_mode_norm not in ("service", "smoke"):
+            run_mode_norm = "service"
+        if run_mode_norm == "smoke":
+            # limit messages and add an internal consumer timeout to ensure CLI exits
+            cmd.extend(["--max-messages", "1", "--timeout-ms", "5000"])
+
+        backoff = 1
+        while True:
+            try:
+                logger.info("Starting kafka-console-consumer: %s", " ".join(cmd))
+                proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, bufsize=1, preexec_fn=os.setsid)
+
+                # Start threads to read stderr and log it so the subprocess doesn't block
+                stderr_thread = threading.Thread(target=_read_and_log_stream, args=(proc.stderr, logging.ERROR), daemon=True)
+                stderr_thread.start()
+
+                # Read stdout line-by-line and parse JSON heartbeats
+                assert proc.stdout is not None
+                for raw in iter(proc.stdout.readline, ""):
+                    if raw is None:
+                        break
+                    line = raw.strip()
+                    if not line:
+                        continue
+                    payload = _parse_first_json_from_text(line)
+                    if not payload:
+                        logger.debug("Non-JSON or unparsable line from consumer: %s", line)
+                        continue
+                    try:
+                        registry.ingest_heartbeat(payload)
+                    except Exception:
+                        logger.exception("Failed to ingest heartbeat")
+
+                # If we exit the loop, process likely terminated
+                rc = proc.poll()
+                run_mode_norm = (run_mode or os.environ.get("AGENT_REGISTRY_RUN_MODE", "service")).lower()
+                if run_mode_norm not in ("service", "smoke"):
+                    run_mode_norm = "service"
+                # If in smoke/test mode and the consumer exited cleanly (rc == 0),
+                # treat as successful completion and return to caller (no restart).
+                if run_mode_norm == "smoke" and rc == 0:
+                    logger.info("kafka-console-consumer exited cleanly (rc=%s); run_mode=%s -> stopping persistent consumer", rc, run_mode_norm)
+                    try:
+                        os.killpg(proc.pid, signal.SIGTERM)
+                    except Exception:
+                        try:
+                            proc.kill()
+                        except Exception:
+                            pass
+                    return
+                logger.warning("kafka-console-consumer terminated with rc=%s; restarting after %s seconds (run_mode=%s)", rc, backoff, run_mode_norm)
+                try:
+                    os.killpg(proc.pid, signal.SIGTERM)
+                except Exception:
+                    try:
+                        proc.kill()
+                    except Exception:
+                        pass
+                time.sleep(backoff)
+                backoff = min(30, backoff * 2)
+                continue
+            except KeyboardInterrupt:
+                logger.info("Stopping kafka persistent consumer (keyboard interrupt)")
+                try:
+                    os.killpg(proc.pid, signal.SIGTERM)
+                except Exception:
+                    try:
+                        proc.terminate()
+                    except Exception:
+                        pass
+                return
+            except Exception:
+                logger.exception("Error while running kafka persistent consumer; retrying")
+                time.sleep(backoff)
+                backoff = min(30, backoff * 2)
+                continue
+
+    # CLI not available; try kafka-python if installed and no client_config (since
+    # we cannot easily translate Java keystore/truststore properties)
+    try:
+        import importlib
+        if importlib.util.find_spec("kafka") is None or client_config:
+            raise ImportError
+        from kafka import KafkaConsumer
+
+        logger.info("Using kafka-python KafkaConsumer for persistent consumption")
+        auto_offset = "earliest" if from_beginning else "latest"
+        consumer = KafkaConsumer(topic, bootstrap_servers=[bootstrap], group_id=group, auto_offset_reset=auto_offset, enable_auto_commit=True)
+        for msg in consumer:
+            try:
+                val = msg.value
+                if isinstance(val, (bytes, bytearray)):
+                    txt = val.decode("utf-8")
+                else:
+                    txt = str(val)
+                payload = json.loads(txt)
+                registry.ingest_heartbeat(payload)
+            except Exception:
+                logger.exception("Failed to parse/ingest message from kafka-python consumer")
+    except ImportError:
+        logger.error("No viable Kafka consumer available: install kafka-python or ensure kafka-console-consumer is on PATH; cannot consume from Kafka")
         return
-    kc = KafkaClient(dry_run=False)
-    while True:
-        msg, meta = kc.consume_one(topic=topic, timeout_s=timeout_s, from_beginning=False)
-        if msg is None:
-            # no message
-            time.sleep(0.1)
-            continue
-        registry.ingest_heartbeat(msg)
 
 
 def main(argv: Optional[list] = None) -> int:
@@ -62,7 +235,9 @@ def main(argv: Optional[list] = None) -> int:
     parser.add_argument("--storage", default="/tmp/ai-dev-agent-registry.json", help="Path to storage file for registry state")
     parser.add_argument("--file-path", help="If provided, tail this file for JSON heartbeats (newline-delimited)")
     parser.add_argument("--topic", default="ai.dev.agent.status", help="Kafka topic to consume")
-    parser.add_argument("--timeout", type=int, default=5, help="Kafka consume timeout s")
+    parser.add_argument("--timeout", type=int, default=5, help="Kafka consume timeout s (unused for persistent consumer)")
+    parser.add_argument("--from-beginning", action="store_true", help="If set, consume from beginning on first start (useful for initial population)")
+    parser.add_argument("--run-mode", choices=("service","smoke"), default=os.environ.get("AGENT_REGISTRY_RUN_MODE","service"), help="Run mode: 'service' (persistent) or 'smoke' (bounded)")
 
     args = parser.parse_args(argv)
     registry = AgentRegistry(storage_path=args.storage)
@@ -81,7 +256,7 @@ def main(argv: Optional[list] = None) -> int:
             return 0
     else:
         try:
-            consume_kafka(args.topic, registry, timeout_s=args.timeout)
+            consume_kafka_persistent(args.topic, registry, timeout_s=args.timeout, from_beginning=args.from_beginning, run_mode=args.run_mode)
         except KeyboardInterrupt:
             logger.info("Stopping kafka consumer")
             return 0
