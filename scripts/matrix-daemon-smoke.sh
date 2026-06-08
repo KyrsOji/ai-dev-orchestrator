@@ -20,7 +20,9 @@ fi
 WAIT_SECS=${WAIT_SECS:-120}
 TOTAL_TIMEOUT=${TOTAL_TIMEOUT:-180}
 
-SAMPLE_TASK='{"taskId":"MATRIX-DAEMON-SMOKE-001","title":"Matrix daemon smoke","status":"success","metadata":{"change_type":"commit"}}'
+SAMPLE_ID="MATRIX-DAEMON-SMOKE-$(date +%s)"
+export SAMPLE_ID
+SAMPLE_TASK=$(printf '%s' "{\"taskId\":\"%s\", \"title\":\"Matrix daemon smoke\", \"status\":\"success\", \"metadata\": {\"change_type\": \"commit\"}}" "$SAMPLE_ID")
 
 PRODUCER_CMD="$(command -v kafka-console-producer.sh || command -v kafka-console-producer || true)"
 CONSUMER_CMD="$(command -v kafka-console-consumer.sh || command -v kafka-console-consumer || true)"
@@ -73,7 +75,12 @@ fi
 TMPLOG=$(mktemp)
 trap 'rc=$?; echo "Cleaning up..."; if [ -n "${BRIDGE_PID:-}" ]; then kill "$BRIDGE_PID" 2>/dev/null || true; fi; rm -f "$TMPLOG"; exit "$rc"' EXIT
 
-env MATRIX_MODE=real MATRIX_HOMESERVER_URL="$HOMESERVER" MATRIX_ACCESS_TOKEN="$TOKEN" MATRIX_ROOM_ID="$ROOM_ID" KAFKA_BOOTSTRAP="$BOOTSTRAP" KAFKA_CLIENT_CONFIG="$CLIENT_CONFIG" $PYTHON -m matrix_bridge.bridge --daemon --matrix-mode real >"$TMPLOG" 2>&1 &
+# Publish sample approval request before starting daemon (read-from-beginning smoke behavior)
+echo "Publishing sample approval request to ai.dev.approval.required"
+publish ai.dev.approval.required "$SAMPLE_TASK"
+
+# Start bridge daemon in background and tell it to consume from beginning for deterministic smoke
+env MATRIX_MODE=real MATRIX_HOMESERVER_URL="$HOMESERVER" MATRIX_ACCESS_TOKEN="$TOKEN" MATRIX_ROOM_ID="$ROOM_ID" KAFKA_BOOTSTRAP="$BOOTSTRAP" KAFKA_CLIENT_CONFIG="$CLIENT_CONFIG" $PYTHON -m matrix_bridge.bridge --daemon --consume-from-beginning --matrix-mode real >"$TMPLOG" 2>&1 &
 BRIDGE_PID=$!
 
 # Wait for the daemon to print its startup line
@@ -101,41 +108,45 @@ if [ $TRIES -ge $MAX_TRIES ]; then
   exit 3
 fi
 
-echo "Bridge daemon started (pid=$BRIDGE_PID). Publishing sample approval request to ai.dev.approval.required"
-publish ai.dev.approval.required "$SAMPLE_TASK"
+echo "Bridge daemon started (pid=$BRIDGE_PID). Waiting for daemon to process the sample approval request"
 
-echo "Bridge will post to Matrix room ${ROOM_ID}. Please send the Matrix command in that room: approve MATRIX-DAEMON-SMOKE-001"
+echo "Bridge will post to Matrix room ${ROOM_ID}. Please send the Matrix command in that room: approve ${SAMPLE_ID}"
 
 # Attempt to consume decision from ai.dev.review.out
 echo "Consuming decision from ai.dev.review.out (bounded wait)"
 if [ -n "$CONSUMER_CMD" ]; then
+  # Collect a bounded set of messages from ai.dev.review.out and search for our SAMPLE_ID
   if [ -n "$CLIENT_CONFIG" ]; then
-    OUT=$(timeout 60s "$CONSUMER_CMD" --bootstrap-server "$BOOTSTRAP" --topic ai.dev.review.out --max-messages 1 --consumer.config "$CLIENT_CONFIG" 2>&1 || true)
+    OUT=$(timeout 60s "$CONSUMER_CMD" --bootstrap-server "$BOOTSTRAP" --topic ai.dev.review.out --max-messages 50 --consumer.config "$CLIENT_CONFIG" 2>&1 || true)
   else
-    OUT=$(timeout 60s "$CONSUMER_CMD" --bootstrap-server "$BOOTSTRAP" --topic ai.dev.review.out --max-messages 1 --timeout-ms 60000 2>&1 || true)
+    OUT=$(timeout 60s "$CONSUMER_CMD" --bootstrap-server "$BOOTSTRAP" --topic ai.dev.review.out --max-messages 50 --timeout-ms 60000 2>&1 || true)
   fi
   echo "Raw consumer output:"
   echo "$OUT"
-  TASK_ID=""
-  DECISION=""
-  if echo "$OUT" | grep -q 'MATRIX-DAEMON-SMOKE-001'; then
-    TASK_ID="MATRIX-DAEMON-SMOKE-001"
-  fi
-  DECISION=$(echo "$OUT" | $PYTHON - <<'PY'
-import sys,json,re
-text=sys.stdin.read()
-m=re.search(r"\{.*\}", text, re.S)
-if not m:
-    sys.exit(0)
-try:
-    obj=json.loads(m.group(0))
-    print(obj.get('decision') or '')
-except Exception:
-    sys.exit(0)
+
+  # Parse any JSON objects in the output and look for our SAMPLE_ID
+  DECISION=$($PYTHON - <<'PY'
+import sys, json, re, os
+text = sys.stdin.read()
+SAMPLE = os.environ.get('SAMPLE_ID', '')
+found = None
+for m in re.finditer(r"\{.*?\}", text, re.S):
+    s = m.group(0)
+    try:
+        obj = json.loads(s)
+    except Exception:
+        continue
+    tid = obj.get('taskId') or obj.get('task_id') or ''
+    if tid == SAMPLE:
+        found = obj.get('decision') or ''
+        break
+if found:
+    print(found)
 PY
-  )
+  ) || true
+
   if [ -n "$DECISION" ]; then
-    echo "Observed decision for task MATRIX-DAEMON-SMOKE-001: $DECISION"
+    echo "Observed decision for task $SAMPLE_ID: $DECISION"
     if [ "$DECISION" = "approved" ]; then
       echo "Matrix daemon smoke: SUCCESS"
       kill "$BRIDGE_PID" || true
@@ -151,14 +162,14 @@ PY
     fi
   else
     # Fallback: inspect daemon stdout for processed marker
-    if grep -q '\[BRIDGE\] processed task=MATRIX-DAEMON-SMOKE-001 decision=approved' "$TMPLOG"; then
+    if grep -q "\[BRIDGE\] processed task=${SAMPLE_ID} decision=approved" "$TMPLOG"; then
       echo "Observed daemon-processed approval in daemon logs; treating as success (ai.dev.review.out verification unavailable)"
       kill "$BRIDGE_PID" || true
       wait "$BRIDGE_PID" 2>/dev/null || true
       rm -f "$TMPLOG"
       exit 0
     fi
-    echo "Could not parse decision message from ai.dev.review.out" >&2
+    echo "Could not find decision for sample id $SAMPLE_ID in ai.dev.review.out output" >&2
     cat "$TMPLOG" >&2 || true
     kill "$BRIDGE_PID" || true
     wait "$BRIDGE_PID" 2>/dev/null || true
