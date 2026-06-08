@@ -149,8 +149,16 @@ class MatrixBridge:
             "reason": resp.reason,
             "approver": resp.approver,
         }
-        logger.info("Publishing decision for task=%s decision=%s", resp.taskId, resp.decision)
-        self.kafka.publish(self.kafka_publish_topic, payload)
+        # Log topic, task id and decision (do not log any secrets)
+        logger.info("Publishing decision for task=%s decision=%s to topic=%s", resp.taskId, resp.decision, self.kafka_publish_topic)
+        success, meta = self.kafka.publish(self.kafka_publish_topic, payload)
+        # Log a small subset of meta for debugging without exposing sensitive data
+        try:
+            safe_keys = ("topic", "partition", "offset", "used_cli", "used_python_client", "dry_run", "returnCode")
+            safe_meta = {k: meta[k] for k in safe_keys if isinstance(meta, dict) and k in meta}
+        except Exception:
+            safe_meta = {}
+        logger.info("Publish meta for task=%s: %s", resp.taskId, safe_meta)
 
     def handle_command(self, cmd: str, task_id: Optional[str] = None, sender: Optional[str] = None) -> Optional[ApprovalResponse]:
         parts = cmd.strip().split()
