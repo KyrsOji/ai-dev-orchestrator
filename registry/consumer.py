@@ -190,6 +190,12 @@ def consume_kafka_persistent(topic: str, registry: AgentRegistry, *, timeout_s: 
                                 agent_id = payload.get("agentId")
                             if agent_id == expected_agent_id:
                                 logger.info("Expected agent '%s' observed in CLI consumer; persisting and exiting", expected_agent_id)
+                                # Ensure storage is flushed to disk before exit
+                                try:
+                                    if registry.storage_path:
+                                        registry._persist_unlocked()
+                                except Exception:
+                                    logger.exception("Failed to persist registry storage before exit")
                                 try:
                                     os.killpg(proc.pid, signal.SIGTERM)
                                 except Exception:
@@ -274,6 +280,11 @@ def consume_kafka_persistent(topic: str, registry: AgentRegistry, *, timeout_s: 
                         if agent_id == expected_agent_id:
                             logger.info("Expected agent '%s' observed in kafka-python consumer; persisting and exiting", expected_agent_id)
                             try:
+                                if registry.storage_path:
+                                    registry._persist_unlocked()
+                            except Exception:
+                                logger.exception("Failed to persist registry storage before exit")
+                            try:
                                 consumer.close()
                             except Exception:
                                 pass
@@ -324,6 +335,11 @@ def main(argv: Optional[list] = None) -> int:
                             agent_id = payload.get("agentId")
                         if agent_id == args.expect_agent_id:
                             logger.info("Expected agent '%s' observed in file-tail; persisting and exiting", args.expect_agent_id)
+                            try:
+                                if registry.storage_path:
+                                    registry._persist_unlocked()
+                            except Exception:
+                                logger.exception("Failed to persist registry storage before exit")
                             return True
                     except Exception:
                         logger.exception("Error while checking expected agent id")
