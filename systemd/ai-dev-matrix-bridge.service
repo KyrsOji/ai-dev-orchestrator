@@ -12,6 +12,8 @@ Environment=CONFIG_PATH=/etc/ai-dev-orchestrator/matrix-approval.yaml
 # be supplied via EnvironmentFile or systemd drop-in; do NOT embed secrets in
 # the unit file directly.
 Environment=MATRIX_MODE=real
+Environment=KAFKA_CONSUMER_CMD=/home/kojiyah/tools/kafka/bin/kafka-console-consumer.sh
+Environment=KAFKA_PRODUCER_CMD=/home/kojiyah/tools/kafka/bin/kafka-console-producer.sh
 # MATRIX_HOMESERVER_URL, MATRIX_ACCESS_TOKEN and MATRIX_ROOM_ID must be provided
 # e.g. via EnvironmentFile=/etc/ai-dev-orchestrator/matrix.env
 # ExecStart runs without --dry-run so it will connect to Matrix when configured

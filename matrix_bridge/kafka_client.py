@@ -53,8 +53,47 @@ class KafkaClient:
         self.dry_run = dry_run
         self.bootstrap = os.environ.get("KAFKA_BOOTSTRAP", "kafka.yahlife.com:9095")
         self.client_config = os.environ.get("KAFKA_CLIENT_CONFIG")
-        self.producer_cli = _find_cli(("kafka-console-producer.sh", "kafka-console-producer"))
-        self.consumer_cli = _find_cli(("kafka-console-consumer.sh", "kafka-console-consumer"))
+        # Discovery order for CLI tools:
+        # 1) Explicit environment variable pointing to executable
+        # 2) PATH discovery (shutil.which)
+        # 3) kafka-python fallback
+        prod_env = os.environ.get("KAFKA_PRODUCER_CMD")
+        cons_env = os.environ.get("KAFKA_CONSUMER_CMD")
+
+        def _is_executable(path: Optional[str]) -> bool:
+            if not path:
+                return False
+            try:
+                p = os.path.expanduser(path)
+                p = os.path.abspath(p)
+                return os.path.isfile(p) and os.access(p, os.X_OK)
+            except Exception:
+                return False
+
+        producer_cli = None
+        if prod_env:
+            if _is_executable(prod_env):
+                producer_cli = os.path.abspath(os.path.expanduser(prod_env))
+            else:
+                logger.warning("KAFKA_PRODUCER_CMD is set but not executable: %s", prod_env)
+        if not producer_cli:
+            producer_cli = _find_cli(("kafka-console-producer.sh", "kafka-console-producer"))
+
+        consumer_cli = None
+        if cons_env:
+            if _is_executable(cons_env):
+                consumer_cli = os.path.abspath(os.path.expanduser(cons_env))
+            else:
+                logger.warning("KAFKA_CONSUMER_CMD is set but not executable: %s", cons_env)
+        if not consumer_cli:
+            consumer_cli = _find_cli(("kafka-console-consumer.sh", "kafka-console-consumer"))
+
+        self.producer_cli = producer_cli
+        self.consumer_cli = consumer_cli
+
+        # Safe startup logging (do not log secrets)
+        logger.info("Resolved kafka producer command: %s", self.producer_cli or "(none)")
+        logger.info("Resolved kafka consumer command: %s", self.consumer_cli or "(none)")
 
     def publish(self, topic: str, message: Dict[str, Any]) -> Tuple[bool, Dict[str, Any]]:
         payload = json.dumps(message, ensure_ascii=False)
