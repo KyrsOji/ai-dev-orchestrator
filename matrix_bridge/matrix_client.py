@@ -179,9 +179,16 @@ class MatrixClient:
             in_reply_to = None
             relates_to = content.get("m.relates_to")
             if isinstance(relates_to, dict):
+                # First, support the nested m.in_reply_to shape
                 in_reply = relates_to.get("m.in_reply_to")
                 if isinstance(in_reply, dict):
                     in_reply_to = in_reply.get("event_id")
+                else:
+                    # Also support the alternative rel_type/event_id shape:
+                    # {"rel_type": "m.in_reply_to", "event_id": "$..."}
+                    rel_type = relates_to.get("rel_type")
+                    if rel_type == "m.in_reply_to" and isinstance(relates_to.get("event_id"), str):
+                        in_reply_to = relates_to.get("event_id")
             out.append({
                 "event_id": ev.get("event_id"),
                 "sender": ev.get("sender"),

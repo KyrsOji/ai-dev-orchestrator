@@ -110,6 +110,8 @@ class MatrixBridge:
         # In-memory mappings to resolve reply-only approvals: approval_event_id -> taskId and vice-versa
         self._approval_event_to_task: Dict[str, str] = {}
         self._task_to_approval_event: Dict[str, str] = {}
+        # Pending approvals per Matrix room. Each entry: {'taskId': str, 'timestamp': float, 'event_id': Optional[str]}
+        self._pending_approvals: Dict[str, List[Dict[str, Any]]] = {}
 
         # Kafka client
         if kafka_client is not None:
@@ -128,10 +130,10 @@ class MatrixBridge:
             f"Approval request for task {task.get('taskId')}: {task.get('title', '')} "
             f"metadata={task.get('metadata', {})}\n\n"
             "Quick mobile approval:\n"
-            "Reply to this message with:\n"
-            "a = approve\n"
-            "d = deny\n\n"
-            "Or type:\n"
+            "Type:\n"
+            "a = approve latest pending request\n"
+            "d = deny latest pending request\n\n"
+            "Safer explicit:\n"
             "a TASK_ID\n"
             "d TASK_ID"
         )
@@ -153,6 +155,17 @@ class MatrixBridge:
                     logger.info("Stored approval mapping event=%s -> task=%s", (event_id[-8:] if isinstance(event_id, str) else event_id), task.get("taskId"))
                 except Exception:
                     logger.exception("Failed to store approval event mapping")
+        # Record pending approval for room-level shortcuts
+        try:
+            entry = {"taskId": task.get("taskId"), "timestamp": time.time(), "event_id": event_id}
+            pending = self._pending_approvals.get(self.matrix_room)
+            if pending is None:
+                self._pending_approvals[self.matrix_room] = [entry]
+            else:
+                pending.append(entry)
+            logger.info("Added pending approval for task=%s room=%s pendingCount=%d", task.get("taskId"), self.matrix_room, len(self._pending_approvals.get(self.matrix_room, [])))
+        except Exception:
+            logger.exception("Failed to record pending approval in memory")
 
     def evaluate_policy(self, task: Dict[str, Any]) -> ApprovalResponse:
         meta = task.get("metadata", {}) or {}
@@ -188,6 +201,20 @@ class MatrixBridge:
         # Log topic, task id and decision (do not log any secrets)
         logger.info("Publishing decision for task=%s decision=%s to topic=%s", resp.taskId, resp.decision, self.kafka_publish_topic)
         success, meta = self.kafka.publish(self.kafka_publish_topic, payload)
+        # Remove pending approvals for this task (if tracked) and clear cached mappings
+        try:
+            room_pending = self._pending_approvals.get(self.matrix_room, [])
+            before = len(room_pending)
+            room_pending = [e for e in room_pending if e.get("taskId") != resp.taskId]
+            self._pending_approvals[self.matrix_room] = room_pending
+            if before != len(room_pending):
+                logger.info("Removed task=%s from pending approvals for room=%s", resp.taskId, self.matrix_room)
+            # Remove cached approval event mapping if present
+            event = self._task_to_approval_event.pop(resp.taskId, None)
+            if event:
+                self._approval_event_to_task.pop(event, None)
+        except Exception:
+            logger.exception("Failed to remove pending approval mapping")
         # Log a small subset of meta for debugging without exposing sensitive data
         try:
             safe_keys = ("topic", "partition", "offset", "used_cli", "used_python_client", "dry_run", "returnCode")
@@ -195,6 +222,8 @@ class MatrixBridge:
         except Exception:
             safe_meta = {}
         logger.info("Publish meta for task=%s: %s", resp.taskId, safe_meta)
+        if isinstance(meta, dict) and 'returnCode' in meta:
+            logger.info("Publish meta returnCode=%s", meta.get('returnCode'))
 
     def handle_command(self, cmd: str, task_id: Optional[str] = None, sender: Optional[str] = None) -> Optional[ApprovalResponse]:
         parts = cmd.strip().split()
@@ -246,9 +275,19 @@ class MatrixBridge:
                         in_reply = relates.get("m.in_reply_to")
                         if isinstance(in_reply, dict):
                             in_reply_to = in_reply.get("event_id")
+                        else:
+                            # support alternative rel_type/event_id shape
+                            rel_type = relates.get("rel_type")
+                            if rel_type == "m.in_reply_to" and isinstance(relates.get("event_id"), str):
+                                in_reply_to = relates.get("event_id")
                 body_stripped = body.strip().lower() if isinstance(body, str) else ""
+
+                # 1) Reply-only: resolve from referenced approval event when possible
                 if in_reply_to and body_stripped in ("a", "d"):
                     resolved_task = self._approval_event_to_task.get(in_reply_to)
+                    # If we already have a mapping, log the resolution
+                    if resolved_task:
+                        logger.info("Resolved reply event_id=%s taskId=%s", in_reply_to, resolved_task)
                     # fallback: fetch the referenced event and try to parse a taskId from its body
                     if not resolved_task:
                         try:
@@ -263,6 +302,7 @@ class MatrixBridge:
                                     self._approval_event_to_task[in_reply_to] = resolved_task
                                     self._task_to_approval_event[resolved_task] = in_reply_to
                                     logger.info("Resolved task=%s from referenced event=%s", resolved_task, (in_reply_to[-8:] if isinstance(in_reply_to, str) else in_reply_to))
+                                    logger.info("Resolved reply event_id=%s taskId=%s", in_reply_to, resolved_task)
                         except Exception:
                             logger.exception("Failed to fetch referenced Matrix event for reply-only processing")
                     if resolved_task:
@@ -276,7 +316,33 @@ class MatrixBridge:
                         logger.info("Reply event=%s referenced=%s resolved_task=%s decision=%s sender=%s", _short(m.get("event_id")), _short(in_reply_to), resolved_task, decision, sender)
                         logger.info("Processed command from %s for task=%s decision=%s", sender, resolved_task, decision)
                         return resp
-                # Fallback to standard command handling
+
+                # 2) Room-level shortcut fallback: if body is exactly 'a' or 'd' and no explicit task id and no reply metadata
+                parts = body.strip().split()
+                if (not in_reply_to) and len(parts) == 1 and body_stripped in ("a", "d"):
+                    room = self.matrix_room
+                    pending = self._pending_approvals.get(room, [])
+                    if not pending:
+                        logger.info("No pending approval found for room-level shortcut")
+                    else:
+                        # choose the newest pending approval (by timestamp)
+                        pending_count = len(pending)
+                        chosen = max(pending, key=lambda e: e.get("timestamp", 0))
+                        task_to_resolve = chosen.get("taskId")
+                        # remove chosen from pending list
+                        try:
+                            self._pending_approvals[room] = [e for e in pending if e.get("taskId") != task_to_resolve]
+                        except Exception:
+                            logger.exception("Failed to remove pending entry for task %s", task_to_resolve)
+                        logger.info("Resolved room shortcut body=%s taskId=%s pendingCount=%s", body_stripped, task_to_resolve, pending_count)
+                        decision = "approved" if body_stripped == "a" else "denied"
+                        resp = ApprovalResponse(taskId=task_to_resolve, decision=decision, approver=sender or "matrix-user")
+                        # publish the decision
+                        self.publish_response(resp)
+                        logger.info("Processed command from %s for task=%s decision=%s", sender, task_to_resolve, decision)
+                        return resp
+
+                # 3) Fallback to standard command handling (explicit 'a TASK_ID' etc.)
                 res = self.handle_command(body, task_id=task_id, sender=sender)
                 if isinstance(res, ApprovalResponse):
                     logger.info("Processed command from %s for task=%s decision=%s", sender, res.taskId, res.decision)
