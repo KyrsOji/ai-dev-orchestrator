@@ -129,12 +129,14 @@ class MatrixClient:
         params = {"timeout": timeout_ms}
         if self._last_batch:
             params["since"] = self._last_batch
+        logger.debug("Matrix.sync called for room=%s since_set=%s timeout_ms=%s", self.room_id, bool(self._last_batch), timeout_ms)
         parsed, meta = self._request("GET", "/_matrix/client/v3/sync", params=params, timeout=timeout_ms // 1000)
         if parsed and isinstance(parsed, dict):
             next_batch = parsed.get("next_batch")
             # update last_batch only when we get a next_batch token
             if next_batch:
                 self._last_batch = next_batch
+            logger.debug("Matrix.sync returned next_batch_set=%s meta_status=%s", bool(next_batch), (meta.get('status_code') if isinstance(meta, dict) else None))
             return parsed, next_batch, meta
         return None, None, meta
 
@@ -178,15 +180,29 @@ class MatrixClient:
                 return uid
         return None
 
-    def poll_commands(self, timeout_s: int = 10) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+    def poll_commands(self, timeout_s: int = 10, ignore_last_batch: bool = False) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
         """Poll for new room messages using /sync and return parsed message objects and meta.
 
         This is a convenience wrapper that calls sync(timeout_ms=timeout_s*1000)
         and extracts room messages.
         """
+        # Optionally ignore any stored last_batch for this poll so callers can perform a full timeline sync
+        orig_batch = self._last_batch
+        if ignore_last_batch:
+            logger.debug("MatrixClient.poll_commands: ignoring stored last_batch for this call")
+            self._last_batch = None
         timeout_ms = max(1000, int(timeout_s * 1000))
+        logger.debug("MatrixClient.poll_commands calling sync timeout_ms=%s ignore_last_batch=%s", timeout_ms, ignore_last_batch)
         parsed, next_batch, meta = self.sync(timeout_ms=timeout_ms)
+        logger.debug("MatrixClient.poll_commands sync returned next_batch_set=%s meta_status=%s", bool(next_batch), (meta.get('status_code') if isinstance(meta, dict) else None))
         if parsed is None:
+            # restore original batch if sync did not return a next_batch
+            if ignore_last_batch and not next_batch:
+                self._last_batch = orig_batch
             return [], meta
         msgs = self.get_room_messages_from_sync(parsed)
+        logger.debug("MatrixClient.poll_commands extracted %d room messages", len(msgs))
+        # If we ignored the previous last_batch and the sync did not provide a next_batch, restore original token
+        if ignore_last_batch and not next_batch:
+            self._last_batch = orig_batch
         return msgs, meta

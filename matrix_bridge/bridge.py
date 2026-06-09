@@ -90,6 +90,7 @@ class MatrixBridge:
             try:
                 self._bot_user = self.matrix.whoami()
                 logger.info("MatrixBridge running in real mode for room=%s", self.matrix_room)
+                logger.info("MatrixBridge bot user id=%s", self._bot_user)
             except Exception:
                 self._bot_user = None
         else:
@@ -235,12 +236,40 @@ class MatrixBridge:
         if self.matrix_mode == "real":
             start = time.time()
             deadline = start + max(0, int(wait_seconds))
+            logger.info("Entering Matrix wait loop for task=%s room=%s wait_seconds=%s deadline=%s", task.get('taskId'), self.matrix_room, int(wait_seconds), time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime(deadline)))
+            poll_attempt = 0
             while time.time() < deadline:
-                msgs, meta = self.matrix.poll_commands(timeout_s=2)
-                if msgs:
-                    res = self._process_incoming_matrix_messages(msgs, task_id=task.get("taskId"))
-                    if res:
-                        return res
+                poll_attempt += 1
+                try:
+                    logger.info("Matrix poll attempt=%d since_token_present=%s timeout_s=%s", poll_attempt, bool(getattr(self.matrix, '_last_batch', None)), 2)
+                    ignore_last = (poll_attempt == 1)
+                    msgs, meta = self.matrix.poll_commands(timeout_s=2, ignore_last_batch=ignore_last)
+                    meta_status = None
+                    try:
+                        if isinstance(meta, dict):
+                            meta_status = meta.get('status_code')
+                    except Exception:
+                        meta_status = None
+                    if not msgs:
+                        logger.info("Matrix poll attempt=%d returned 0 messages; meta.status=%s", poll_attempt, meta_status)
+                    else:
+                        logger.info("Matrix poll attempt=%d returned %d message(s); meta.status=%s", poll_attempt, len(msgs), meta_status)
+                        for m in msgs:
+                            try:
+                                sender = m.get('sender')
+                                body = m.get('body', '')
+                                if not isinstance(body, str):
+                                    continue
+                                verb = body.strip().split()[0].lower() if body.strip() else ''
+                                if verb in ("approve", "deny", "status", "auto-approve", "require-approval"):
+                                    logger.info("Matrix potential command from=%s body=%s", sender, body[:500])
+                            except Exception:
+                                logger.exception("Error reading message for diagnostics")
+                        res = self._process_incoming_matrix_messages(msgs, task_id=task.get("taskId"))
+                        if res:
+                            return res
+                except Exception:
+                    logger.exception("Error while polling Matrix commands")
                 # small sleep to avoid busy loop
                 time.sleep(1)
             # timeout - return pending
