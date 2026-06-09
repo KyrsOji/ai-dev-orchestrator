@@ -15,6 +15,10 @@ import os
 from dataclasses import dataclass, asdict
 from typing import Any, Dict, List, Optional
 import time
+import uuid
+import re
+
+
 
 
 from matrix_bridge.kafka_client import KafkaClient
@@ -39,8 +43,11 @@ class MatrixMock:
         self.room = room
         self.user = user
 
-    def post_message(self, content: str) -> None:
-        print(f"[MATRIX-MOCK] room={self.room} user={self.user} message={content}")
+    def post_message(self, content: str):
+        """Post a message and return a fake send response including event_id."""
+        evt = f"$mock{uuid.uuid4().hex}"
+        print(f"[MATRIX-MOCK] room={self.room} user={self.user} message={content} event_id={evt}")
+        return True, {"event_id": evt}, {}
 
 
 class KafkaMock:
@@ -99,6 +106,11 @@ class MatrixBridge:
             self._bot_user = None
             logger.info("MatrixBridge running in mock mode for room=%s", self.matrix_room)
 
+
+        # In-memory mappings to resolve reply-only approvals: approval_event_id -> taskId and vice-versa
+        self._approval_event_to_task: Dict[str, str] = {}
+        self._task_to_approval_event: Dict[str, str] = {}
+
         # Kafka client
         if kafka_client is not None:
             self.kafka = kafka_client
@@ -114,10 +126,33 @@ class MatrixBridge:
     def post_approval_request(self, task: Dict[str, Any]) -> None:
         body = (
             f"Approval request for task {task.get('taskId')}: {task.get('title', '')} "
-            f"metadata={task.get('metadata', {})}"
+            f"metadata={task.get('metadata', {})}\n\n"
+            "Quick mobile approval:\n"
+            "Reply to this message with:\n"
+            "a = approve\n"
+            "d = deny\n\n"
+            "Or type:\n"
+            "a TASK_ID\n"
+            "d TASK_ID"
         )
         logger.info("Posting approval request task=%s to matrix room=%s", task.get("taskId"), self.matrix_room)
-        self.matrix.post_message(body)
+        try:
+            success, parsed, meta = self.matrix.post_message(body)
+        except Exception:
+            # Backwards compatibility: client may return (True, meta)
+            parsed = None
+            success = False
+            meta = {}
+        event_id = None
+        if success and isinstance(parsed, dict):
+            event_id = parsed.get("event_id")
+            if event_id:
+                try:
+                    self._approval_event_to_task[event_id] = task.get("taskId")
+                    self._task_to_approval_event[task.get("taskId")] = event_id
+                    logger.info("Stored approval mapping event=%s -> task=%s", (event_id[-8:] if isinstance(event_id, str) else event_id), task.get("taskId"))
+                except Exception:
+                    logger.exception("Failed to store approval event mapping")
 
     def evaluate_policy(self, task: Dict[str, Any]) -> ApprovalResponse:
         meta = task.get("metadata", {}) or {}
@@ -166,15 +201,16 @@ class MatrixBridge:
         if not parts:
             return None
         verb = parts[0].lower()
-        if verb in ("approve", "deny", "status") and len(parts) >= 2:
+        # Support short aliases 'a' => approve, 'd' => deny when followed by a task id
+        if verb in ("approve", "a", "deny", "d", "status") and len(parts) >= 2:
             target = parts[1]
             if task_id and target != task_id:
                 return None
-            if verb == "approve":
+            if verb in ("approve", "a"):
                 resp = ApprovalResponse(taskId=target, decision="approved", approver=sender or "matrix-user")
                 self.publish_response(resp)
                 return resp
-            if verb == "deny":
+            if verb in ("deny", "d"):
                 resp = ApprovalResponse(taskId=target, decision="denied", approver=sender or "matrix-user")
                 self.publish_response(resp)
                 return resp
@@ -200,6 +236,47 @@ class MatrixBridge:
                 # ignore our own messages
                 continue
             try:
+                # Reply-only handling: if message is a reply to a known approval event and body is exactly 'a' or 'd'
+                in_reply_to = None
+                if isinstance(m.get("in_reply_to"), str):
+                    in_reply_to = m.get("in_reply_to")
+                else:
+                    relates = m.get("relates_to")
+                    if isinstance(relates, dict):
+                        in_reply = relates.get("m.in_reply_to")
+                        if isinstance(in_reply, dict):
+                            in_reply_to = in_reply.get("event_id")
+                body_stripped = body.strip().lower() if isinstance(body, str) else ""
+                if in_reply_to and body_stripped in ("a", "d"):
+                    resolved_task = self._approval_event_to_task.get(in_reply_to)
+                    # fallback: fetch the referenced event and try to parse a taskId from its body
+                    if not resolved_task:
+                        try:
+                            event_json = self.matrix.get_event(in_reply_to)
+                            if event_json and isinstance(event_json, dict):
+                                content = event_json.get("content", {}) or {}
+                                orig_body = content.get("body", "") or ""
+                                mobj = re.search(r"task\\s+([A-Za-z0-9\\-_]+)", orig_body, flags=re.I)
+                                if mobj:
+                                    resolved_task = mobj.group(1)
+                                    # cache mapping for future replies
+                                    self._approval_event_to_task[in_reply_to] = resolved_task
+                                    self._task_to_approval_event[resolved_task] = in_reply_to
+                                    logger.info("Resolved task=%s from referenced event=%s", resolved_task, (in_reply_to[-8:] if isinstance(in_reply_to, str) else in_reply_to))
+                        except Exception:
+                            logger.exception("Failed to fetch referenced Matrix event for reply-only processing")
+                    if resolved_task:
+                        decision = "approved" if body_stripped == "a" else "denied"
+                        resp = ApprovalResponse(taskId=resolved_task, decision=decision, approver=sender or "matrix-user")
+                        # publish the decision
+                        self.publish_response(resp)
+                        # safe logs: include reply event id truncated and referenced event id truncated
+                        def _short(e):
+                            return (e[-8:] if isinstance(e, str) and len(e) > 8 else e)
+                        logger.info("Reply event=%s referenced=%s resolved_task=%s decision=%s sender=%s", _short(m.get("event_id")), _short(in_reply_to), resolved_task, decision, sender)
+                        logger.info("Processed command from %s for task=%s decision=%s", sender, resolved_task, decision)
+                        return resp
+                # Fallback to standard command handling
                 res = self.handle_command(body, task_id=task_id, sender=sender)
                 if isinstance(res, ApprovalResponse):
                     logger.info("Processed command from %s for task=%s decision=%s", sender, res.taskId, res.decision)
@@ -261,7 +338,7 @@ class MatrixBridge:
                                 if not isinstance(body, str):
                                     continue
                                 verb = body.strip().split()[0].lower() if body.strip() else ''
-                                if verb in ("approve", "deny", "status", "auto-approve", "require-approval"):
+                                if verb in ("approve", "a", "deny", "d", "status", "auto-approve", "require-approval"):
                                     logger.info("Matrix potential command from=%s body=%s", sender, body[:500])
                             except Exception:
                                 logger.exception("Error reading message for diagnostics")

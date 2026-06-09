@@ -108,10 +108,11 @@ class MatrixClient:
             meta.update({"error": str(exc), "errorType": type(exc).__name__})
             return None, meta
 
-    def post_message(self, body: str) -> Tuple[bool, Dict[str, Any]]:
+    def post_message(self, body: str) -> Tuple[bool, Optional[Dict[str, Any]], Dict[str, Any]]:
         """Post a simple text message to the configured room.
 
-        Returns (success, meta).
+        Returns (success, parsed_response_or_None, meta).
+        parsed response may include 'event_id' when the homeserver returns it.
         """
         txn = uuid.uuid4().hex
         path = f"/_matrix/client/v3/rooms/{urllib.parse.quote(self.room_id)}/send/m.room.message/{txn}"
@@ -120,8 +121,8 @@ class MatrixClient:
         logger.info("Posting message to Matrix room=%s summary=%s", self.room_id, (body[:120] + "...") if len(body) > 120 else body)
         parsed, meta = self._request("PUT", path, data=content)
         if parsed is None:
-            return False, meta
-        return True, meta
+            return False, None, meta
+        return True, parsed, meta
 
     def sync(self, timeout_ms: int = 30000) -> Tuple[Optional[Dict[str, Any]], Optional[str], Dict[str, Any]]:
         """Call /sync and return (parsed_json_or_None, next_batch_or_None, meta).
@@ -139,6 +140,20 @@ class MatrixClient:
             logger.debug("Matrix.sync returned next_batch_set=%s meta_status=%s", bool(next_batch), (meta.get('status_code') if isinstance(meta, dict) else None))
             return parsed, next_batch, meta
         return None, None, meta
+
+    def get_event(self, event_id: str) -> Optional[Dict[str, Any]]:
+        """Fetch a single event by id from the configured room.
+
+        Returns the event JSON (including 'content') or None.
+        """
+        if not event_id:
+            return None
+        path = f"/_matrix/client/v3/rooms/{urllib.parse.quote(self.room_id)}/event/{urllib.parse.quote(event_id)}"
+        parsed, meta = self._request("GET", path)
+        if parsed and isinstance(parsed, dict):
+            return parsed
+        return None
+
 
     def get_room_messages_from_sync(self, sync_json: Dict[str, Any]) -> List[Dict[str, Any]]:
         """Extract m.room.message events from a sync JSON for the configured room.
@@ -160,11 +175,20 @@ class MatrixClient:
             body = content.get("body")
             if not body:
                 continue
+            # Try to extract reply-to information if present
+            in_reply_to = None
+            relates_to = content.get("m.relates_to")
+            if isinstance(relates_to, dict):
+                in_reply = relates_to.get("m.in_reply_to")
+                if isinstance(in_reply, dict):
+                    in_reply_to = in_reply.get("event_id")
             out.append({
                 "event_id": ev.get("event_id"),
                 "sender": ev.get("sender"),
                 "body": body,
                 "origin_server_ts": ev.get("origin_server_ts"),
+                "in_reply_to": in_reply_to,
+                "relates_to": relates_to if isinstance(relates_to, dict) else None,
             })
         return out
 
