@@ -175,10 +175,12 @@ class KafkaClient:
                         line = raw.strip()
                         if not line:
                             continue
+                        logger.debug("Raw Kafka line: %s", line[:500])
                         payload = _parse_first_json_from_text(line)
                         if not payload:
                             logger.debug("Non-JSON or unparsable line from consumer: %s", line)
                             continue
+                        logger.info("Parsed Kafka message topic=%s taskId=%s", topic, (payload.get("taskId") if isinstance(payload, dict) else None))
                         yield payload, {"used_cli": True}
 
                     rc = proc.poll()
