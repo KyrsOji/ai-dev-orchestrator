@@ -1,0 +1,4 @@
+# Ignore all log files created by the runner
+*
+# But keep this file in git
+!.gitignore

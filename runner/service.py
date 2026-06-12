@@ -28,6 +28,7 @@ from . import run_directory
 from . import result_publisher
 from . import openhands_executor
 from . import execution_guard
+from matrix_bridge.kafka_client import KafkaClient
 
 
 # Configuration
@@ -205,22 +206,34 @@ def main() -> int:
     signal.signal(signal.SIGTERM, _shutdown)
     signal.signal(signal.SIGINT, _shutdown)
 
-    # Main loop
+    # Initialize Kafka client for persistent consumption
     try:
-        while _running:
-            try:
-                task, meta = _consume_one_task_cli(TASK_TOPIC, timeout_ms=10000)
-            except Exception as e:  # Defensive: any unexpected exception should not crash the service
-                logging.exception("Unexpected error while attempting to consume task: %s", e)
-                time.sleep(2)
+        client = KafkaClient(dry_run=(RUNNER_MODE == "dry-run"))
+    except Exception:
+        logging.exception("Failed to initialize Kafka client")
+        return 1
+
+    logging.info("Starting persistent Kafka consumer for topic=%s group=%s", TASK_TOPIC, CONSUMER_GROUP)
+
+    # Use the KafkaClient.listen generator to receive messages continuously
+    try:
+        gen = client.listen(topic=TASK_TOPIC, group=CONSUMER_GROUP)
+    except Exception:
+        logging.exception("Failed to start Kafka consumer generator")
+        return 1
+
+    try:
+        logging.info("Consumer connected")
+        for payload, meta in gen:
+            if not _running:
+                break
+
+            # 'payload' is expected to be a dict representing the task
+            if not payload:
+                logging.debug("Received empty payload: %s", meta)
                 continue
 
-            if task is None:
-                # No task received; meta explains why (timeout, parse error, etc.)
-                logging.debug("No task consumed: %s", meta)
-                time.sleep(1)
-                continue
-
+            task = payload
             task_id = task.get("taskId") or task.get("id")
             logging.info("Task received: %s", task_id)
 
@@ -234,8 +247,8 @@ def main() -> int:
                 # Step 2: Dry-run: do not invoke OpenHands; create placeholder dispatch (already handled by run_directory)
                 # Step 3: Build and publish result
                 result_msg = build_result_message(task, run_dir, status="dry_run_completed")
-                # Step 2: Execute or dry-run via OpenHands adapter
-                # Configure mode and timeout via environment variables
+
+                # Step 4: Optionally execute via OpenHands
                 execution_mode = RUNNER_MODE
                 try:
                     timeout_seconds = int(os.environ.get("OPENHANDS_TIMEOUT_SECONDS", str(OPENHANDS_TIMEOUT_SECONDS)))
@@ -244,16 +257,13 @@ def main() -> int:
 
                 if execution_mode == "execute":
                     logging.info("OpenHands execution mode: execute (timeout=%s seconds)", timeout_seconds)
-                    # Run the execution guard before attempting to execute OpenHands
                     allowed, guard_meta = execution_guard.guard_execution(task, run_dir)
                     if not allowed:
                         reason = guard_meta.get("reason", "blocked_by_execution_guard")
                         logging.error("Execution guard blocked execution: %s", reason)
                         result_msg = build_result_message(task, run_dir, status="failed", summary=f"Execution blocked by guard: {reason}")
                     else:
-                        # Execute using the OpenHands executor (executor reads OPENHANDS_* env vars)
                         exec_meta = openhands_executor.execute_task(run_dir, task)
-                        # Map executor status to result status
                         exec_status = exec_meta.get("status")
                         if exec_status in ("completed", "executed"):
                             status = "executed"
@@ -274,7 +284,6 @@ def main() -> int:
                     logging.error("Failed to publish result for task %s: %s", task_id, pub_meta)
 
             except Exception as e:
-                # On any failure, publish a failed result and continue
                 logging.exception("Error processing task %s: %s", task_id, e)
                 summary = str(e)
                 if len(summary) > 1000:
@@ -289,11 +298,9 @@ def main() -> int:
                 except Exception:
                     logging.exception("Exception while attempting to publish failure result for task %s", task_id)
 
-            # Continue to next message
-            time.sleep(0.2)
-
+    except Exception as e:
+        logging.exception("Unexpected error in consumer loop: %s", e)
     finally:
-        # As we invoke the console consumer per-message there is no long-lived consumer
         logging.info("Shutting down OFBiz continuous runner service")
 
     return 0

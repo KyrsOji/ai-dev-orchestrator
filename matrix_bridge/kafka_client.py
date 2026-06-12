@@ -221,18 +221,30 @@ class KafkaClient:
 
             logger.info("Using kafka-python KafkaConsumer for persistent consumption topic=%s group=%s", topic, group)
             auto_offset = "earliest" if from_beginning else "latest"
-            consumer = KafkaConsumer(topic, bootstrap_servers=[self.bootstrap], group_id=group, auto_offset_reset=auto_offset, enable_auto_commit=True)
-            for msg in consumer:
-                try:
-                    val = msg.value
-                    if isinstance(val, (bytes, bytearray)):
-                        txt = val.decode("utf-8")
-                    else:
-                        txt = str(val)
-                    payload = json.loads(txt)
-                    yield payload, {"used_python_client": True, "partition": getattr(msg, 'partition', None), "offset": getattr(msg, 'offset', None)}
-                except Exception:
-                    logger.exception("Failed to parse/ingest message from kafka-python consumer")
+            try:
+                # Create consumer without directly subscribing so we can attach a rebalance listener
+                class _RebalanceListener:
+                    def on_partitions_assigned(self, assigned):
+                        logger.info("Consumer assigned partitions: %s", assigned)
+                    def on_partitions_revoked(self, revoked):
+                        logger.info("Consumer revoked partitions: %s", revoked)
+                consumer = KafkaConsumer(bootstrap_servers=[self.bootstrap], group_id=group, auto_offset_reset=auto_offset, enable_auto_commit=True)
+                consumer.subscribe([topic], listener=_RebalanceListener())
+                logger.info("Consumer connected")
+                for msg in consumer:
+                    try:
+                        val = msg.value
+                        if isinstance(val, (bytes, bytearray)):
+                            txt = val.decode("utf-8")
+                        else:
+                            txt = str(val)
+                        payload = json.loads(txt)
+                        yield payload, {"used_python_client": True, "partition": getattr(msg, 'partition', None), "offset": getattr(msg, 'offset', None)}
+                    except Exception:
+                        logger.exception("Failed to parse/ingest message from kafka-python consumer")
+            except Exception:
+                logger.exception("kafka-python persistent consumer failed")
+                return
         except Exception:
             logger.exception("No viable Kafka consumer available: install kafka-python or ensure kafka-console-consumer is on PATH; cannot consume from Kafka")
             return
