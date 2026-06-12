@@ -154,8 +154,10 @@ def _consume_one_task_cli(topic: str, timeout_ms: int = 10000) -> Tuple[Optional
         "--group",
         CONSUMER_GROUP,
     ]
-    if KAFKA_CLIENT_CONFIG:
-        cmd.extend(["--consumer.config", KAFKA_CLIENT_CONFIG])
+    # Read KAFKA_CLIENT_CONFIG at runtime to pick up environment changes
+    client_config = os.environ.get("KAFKA_CLIENT_CONFIG")
+    if client_config:
+        cmd.extend(["--consumer.config", client_config])
 
     try:
         proc = subprocess.run(cmd, capture_output=True, text=True, timeout=(timeout_ms / 1000.0 + 5))
