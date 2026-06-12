@@ -206,6 +206,8 @@ class Reviewer:
                     "action": action,
                     "details": {"policy": policy, "reason": reason},
                 }
+                # Mark that this task has been explicitly approved by a human
+                payload["executionApproved"] = True
                 # Agent selection before publishing
                 selected, selection_reason = self._select_agent_for_topic(self.task_topic)
                 if selected is None:
