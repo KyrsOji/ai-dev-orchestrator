@@ -1,0 +1,54 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Taskboard Widget MVP - Preview</title>
+    <style>
+      body { font-family: Arial, Helvetica, sans-serif; background: #f6f7fb; margin: 0; padding: 16px }
+      .container { display:flex; gap:12px }
+      .column { background:white; padding:8px; border-radius:6px; width:220px }
+      .card { background:#f9fafb; padding:8px; border-radius:6px; margin-bottom:8px }
+      .detail { background:white; padding:12px; border-radius:6px; flex:1 }
+      pre { white-space: pre-wrap }
+    </style>
+  </head>
+  <body>
+    <h1>Task Board MVP — Preview</h1>
+    <div class="container">
+      <div class="column">
+        <h3>Pending Review</h3>
+        <div class="card"><strong>Fix memory leak</strong><div class="muted">TASK-1</div></div>
+        <div class="card"><strong>Another pending task</strong><div class="muted">TASK-3</div></div>
+      </div>
+      <div class="column">
+        <h3>Approved</h3>
+        <div class="card"><strong>Update README</strong><div class="muted">TASK-2</div></div>
+      </div>
+      <div class="column">
+        <h3>Completed</h3>
+        <div class="card"><strong>Refactor module</strong><div class="muted">TASK-4</div></div>
+      </div>
+      <div class="detail">
+        <h2>Fix memory leak in service A</h2>
+        <div class="muted">TASK-1</div>
+        <h4>OpenHands output</h4>
+        <pre>OpenHands suggests patch xyz to close file handles and add checks.</pre>
+        <h4>Reviewer summary</h4>
+        <pre>Reviewer: patch looks good, please run test-suite.
+</pre>
+        <h4>Proposed actions</h4>
+        <div>- commit: Apply memory-fix patch</div>
+        <div>- manual: Review runbook</div>
+        <h4>Notes</h4>
+        <pre></pre>
+        <div style="margin-top:12px">
+          <button>Save</button>
+          <button>Approve</button>
+          <button>Deny</button>
+          <button>Defer</button>
+        </div>
+      </div>
+    </div>
+  </body>
+</html>
