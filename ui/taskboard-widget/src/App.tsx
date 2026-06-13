@@ -11,12 +11,12 @@ function uuid(prefix = '') {
 
 const api = {
   async getTasks(): Promise<Task[]> {
-    const res = await fetch('/api/tasks')
+    const res = await fetch(`${import.meta.env.BASE_URL}api/tasks`)
     if (!res.ok) throw new Error('Failed to fetch tasks')
     return res.json()
   },
   async saveTask(task: Task): Promise<Task[]> {
-    const res = await fetch('/api/task/save', {
+    const res = await fetch(`${import.meta.env.BASE_URL}api/task/save`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(task),
