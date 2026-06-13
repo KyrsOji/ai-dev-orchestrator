@@ -282,9 +282,28 @@ class MatrixBridge:
                 if not task_id or not decision or source != "element-widget":
                     logger.warning("Ignored invalid taskboard action event sender=%s reason=missing_or_invalid_fields taskId=%s decision=%s source=%s", sender, task_id, decision, source)
                     continue
-                # Log the action capture (do not publish to Kafka yet)
+                # Log the action capture
                 logger.info("Taskboard action received taskId=%s decision=%s policy=%s sender=%s", task_id, decision, policy, sender)
-                # Do not publish any ai.dev.review.out yet; simply consume the event
+                # Map widget event to review message and publish to Kafka
+                review_msg = {
+                    "taskId": task_id,
+                    "decision": decision,
+                    "policy": policy,
+                    "reason": content.get("notes") or None,
+                    "approver": sender or None,
+                    "source": source,
+                    "selectedAction": content.get("selectedAction") or None,
+                    "editedAction": content.get("editedAction") or None,
+                    "newAction": content.get("newAction") or None,
+                    "createdAt": content.get("createdAt") or None,
+                }
+                try:
+                    logger.info("Publishing taskboard action taskId=%s decision=%s policy=%s to %s", task_id, decision, policy, self.kafka_publish_topic)
+                    success, meta = self.kafka.publish(self.kafka_publish_topic, review_msg)
+                    logger.info("Publish meta for taskboard action taskId=%s: %s", task_id, meta)
+                except Exception:
+                    logger.exception("Failed to publish taskboard action for task=%s", task_id)
+                # consume the event (do not return an ApprovalResponse here)
                 continue
             # Fallback to legacy text body handling for m.room.message
             body = m.get("body", "")
