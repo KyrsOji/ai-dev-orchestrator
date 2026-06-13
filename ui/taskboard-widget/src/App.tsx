@@ -36,6 +36,8 @@ const Column = ({ title, children }: { title: string; children: React.ReactNode 
 function TaskDetail({ task, onSave }: { task: Task; onSave: (t: Task) => Promise<any> }) {
   const [local, setLocal] = useState<Task>(task)
   const [toast, setToast] = useState<{ type: 'success' | 'warning' | 'error' | null; message: string | null }>({ type: null, message: null })
+  // newActionDraft holds form state for creating a new action inline
+  const [newActionDraft, setNewActionDraft] = useState<{ type: string; description: string } | null>(null)
   useEffect(() => setLocal(task), [task])
 
   function update(change: Partial<Task>) {
@@ -49,16 +51,26 @@ function TaskDetail({ task, onSave }: { task: Task; onSave: (t: Task) => Promise
     setTimeout(() => setToast({ type: null, message: null }), 3000)
   }
 
-  function addAction() {
+  function startNewAction() {
+    setNewActionDraft({ type: 'manual', description: '' })
+  }
+
+  function cancelNewAction() {
+    setNewActionDraft(null)
+  }
+
+  function createNewAction() {
+    if (!newActionDraft) return
     const newAct: ProposedAction = {
       id: uuid('act-'),
-      type: 'manual',
-      description: 'New action',
+      type: newActionDraft.type,
+      description: newActionDraft.description || 'New action',
       payload: {},
     }
     const updated = { ...local, proposedActions: [...local.proposedActions, newAct] }
     setLocal(updated)
-    // Try to inform Matrix about the new action (does not change status)
+    setNewActionDraft(null)
+    // Inform Matrix (capture-only); local save occurs when user clicks Draft Changes
     sendActionEvent('new_action', { newAction: newAct }).catch(() => {})
   }
 
@@ -185,54 +197,93 @@ function TaskDetail({ task, onSave }: { task: Task; onSave: (t: Task) => Promise
       ) : null}
 
       <div className="task-content">
-        <div className="panel panel-openhands">
-          <h4>OpenHands output</h4>
-          <pre>{local.openhandsResponse}</pre>
-        </div>
-
+        {/* Reviewer summary first — primary guidance */}
         <div className="panel panel-reviewer">
           <h4>Reviewer summary</h4>
           <pre>{local.reviewerSummary}</pre>
         </div>
 
+        <div className="panel panel-openhands">
+          <h4>OpenHands output</h4>
+          <pre>{local.openhandsResponse}</pre>
+        </div>
+
+        <div className="panel panel-selected-action">
+          <h4>Selected Action</h4>
+          {selectedActionObj ? (
+            <div className="selected-action-panel">
+              <div style={{ fontWeight: 700 }}>{selectedActionObj.description}</div>
+              <div className="muted">{selectedActionObj.type} • {selectedActionObj.id}</div>
+            </div>
+          ) : (
+            <div className="muted">No action selected</div>
+          )}
+        </div>
+
         <div className="panel panel-actions">
-          <h4>Proposed actions</h4>
-          <button className="small" onClick={addAction} style={{ marginBottom: 8 }}>
-            + Create New Action
-          </button>
-          <div style={{ marginBottom: 8 }}>
-            <strong>Selected:</strong>{' '}
-            {selectedActionObj ? `${selectedActionObj.description} (${selectedActionObj.id})` : 'None'}
-          </div>
-          {local.proposedActions.map((a) => (
-            <div key={a.id} className="action">
-              <input
-                type="radio"
-                name={`selected-${local.taskId}`}
-                checked={local.selectedAction === a.id}
-                onChange={() => update({ selectedAction: a.id })}
-                title="Select this action"
-              />
-              <input
-                type="text"
-                value={a.description}
-                onChange={(e) => updateAction(a.id, { description: e.target.value })}
-              />
-              <select value={a.type} onChange={(e) => updateAction(a.id, { type: e.target.value })}>
+          <h4>Proposed Actions</h4>
+
+          {/* New action inline mini-form */}
+          {!newActionDraft ? (
+            <button className="small" onClick={startNewAction} style={{ marginBottom: 8 }}>
+              + Create New Action
+            </button>
+          ) : (
+            <div className="new-action-form" style={{ marginBottom: 8, display: 'flex', gap: 8, alignItems: 'center' }}>
+              <select value={newActionDraft.type} onChange={(e) => setNewActionDraft({ ...newActionDraft, type: e.target.value })}>
                 <option value="commit">commit</option>
                 <option value="push">push</option>
                 <option value="docs">docs</option>
                 <option value="test">test</option>
                 <option value="manual">manual</option>
               </select>
-              <button className="small" onClick={() => removeAction(a.id)}>
-                Remove
-              </button>
-              <button className="small" onClick={() => sendEditAction(a)} style={{ marginLeft: 8 }}>
-                Submit Edited Action
-              </button>
+              <input style={{ flex: 1, padding: 6 }} value={newActionDraft.description} onChange={(e) => setNewActionDraft({ ...newActionDraft, description: e.target.value })} placeholder="Description" />
+              <button className="small" onClick={createNewAction}>Create</button>
+              <button className="small" onClick={cancelNewAction}>Cancel</button>
             </div>
-          ))}
+          )}
+
+          <div style={{ marginBottom: 8 }}>
+            <strong>Selected:</strong>{' '}
+            {selectedActionObj ? `${selectedActionObj.description} (${selectedActionObj.id})` : 'None'}
+          </div>
+
+          {local.proposedActions.map((a) => {
+            const isSelected = local.selectedAction === a.id
+            return (
+              <div key={a.id} className={`action ${isSelected ? 'selected-action' : ''}`}>
+                <input
+                  type="radio"
+                  name={`selected-${local.taskId}`}
+                  checked={isSelected}
+                  onChange={() => update({ selectedAction: a.id })}
+                  title="Select this action"
+                />
+                <div style={{ display: 'flex', flexDirection: 'column', flex: 1 }}>
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                    {isSelected && <span className="selected-badge">✓ Selected</span>}
+                    <input
+                      type="text"
+                      value={a.description}
+                      onChange={(e) => updateAction(a.id, { description: e.target.value })}
+                      style={{ flex: 1 }}
+                    />
+                    <select value={a.type} onChange={(e) => updateAction(a.id, { type: e.target.value })}>
+                      <option value="commit">commit</option>
+                      <option value="push">push</option>
+                      <option value="docs">docs</option>
+                      <option value="test">test</option>
+                      <option value="manual">manual</option>
+                    </select>
+                  </div>
+                  <div style={{ marginTop: 6 }}>
+                    <button className="small" onClick={() => removeAction(a.id)}>Remove</button>
+                    <button className="small" onClick={() => sendEditAction(a)} style={{ marginLeft: 8 }}>Send Proposal</button>
+                  </div>
+                </div>
+              </div>
+            )
+          })}
         </div>
 
         <div className="panel panel-notes">
@@ -242,10 +293,8 @@ function TaskDetail({ task, onSave }: { task: Task; onSave: (t: Task) => Promise
       </div>
 
       <div className="buttons workspace-actions">
-        <button onClick={handleSave}>Save</button>
-        <button onClick={() => doDecision('approved')} disabled={!local.selectedAction}>
-          Approve Selected Action
-        </button>
+        <button onClick={handleSave}>Draft Changes</button>
+        <button onClick={() => doDecision('approved')} disabled={!local.selectedAction}>Approve</button>
         <button onClick={() => doDecision('denied')}>Deny</button>
         <button onClick={() => doDecision('deferred')}>Defer</button>
       </div>
@@ -259,8 +308,11 @@ export default function App() {
   const [loading, setLoading] = useState(true)
 
   // sidebar collapse state
+  const [collapsedAll, setCollapsedAll] = useState(false)
   const [collapsedPending, setCollapsedPending] = useState(false)
   const [collapsedApproved, setCollapsedApproved] = useState(false)
+  const [collapsedDeferred, setCollapsedDeferred] = useState(false)
+  const [collapsedDenied, setCollapsedDenied] = useState(false)
   const [collapsedCompleted, setCollapsedCompleted] = useState(false)
 
   async function load() {
@@ -285,8 +337,11 @@ export default function App() {
     return data
   }
 
+  const allTasks = tasks
   const pending = tasks.filter((t) => t.status === 'pending_review')
   const approved = tasks.filter((t) => t.status === 'approved')
+  const deferred = tasks.filter((t) => t.status === 'deferred')
+  const denied = tasks.filter((t) => t.status === 'denied')
   const completed = tasks.filter((t) => t.status === 'completed')
 
   const current = tasks.find((t) => t.taskId === selected) || null
@@ -299,6 +354,25 @@ export default function App() {
 
       <div className="workspace">
         <aside className="sidebar">
+          <div className="sidebar-section">
+            <div className="section-header" onClick={() => setCollapsedAll(!collapsedAll)}>
+              <h3>All Tasks ({allTasks.length})</h3>
+              <div className="collapse-indicator">{collapsedAll ? '+' : '−'}</div>
+            </div>
+            {!collapsedAll && <div className="section-list">
+              {allTasks.map((t) => (
+                <div
+                  className={'card' + (selected === t.taskId ? ' selected' : '')}
+                  key={t.taskId}
+                  onClick={() => setSelected(t.taskId)}
+                >
+                  <div className="card-title">{t.title}</div>
+                  <div className="muted">{t.taskId} • {t.status}</div>
+                </div>
+              ))}
+            </div>}
+          </div>
+
           <div className="sidebar-section">
             <div className="section-header" onClick={() => setCollapsedPending(!collapsedPending)}>
               <h3>Pending Review ({pending.length})</h3>
@@ -325,6 +399,44 @@ export default function App() {
             </div>
             {!collapsedApproved && <div className="section-list">
               {approved.map((t) => (
+                <div
+                  className={'card' + (selected === t.taskId ? ' selected' : '')}
+                  key={t.taskId}
+                  onClick={() => setSelected(t.taskId)}
+                >
+                  <div className="card-title">{t.title}</div>
+                  <div className="muted">{t.taskId}</div>
+                </div>
+              ))}
+            </div>}
+          </div>
+
+          <div className="sidebar-section">
+            <div className="section-header" onClick={() => setCollapsedDeferred(!collapsedDeferred)}>
+              <h3>Deferred ({deferred.length})</h3>
+              <div className="collapse-indicator">{collapsedDeferred ? '+' : '−'}</div>
+            </div>
+            {!collapsedDeferred && <div className="section-list">
+              {deferred.map((t) => (
+                <div
+                  className={'card' + (selected === t.taskId ? ' selected' : '')}
+                  key={t.taskId}
+                  onClick={() => setSelected(t.taskId)}
+                >
+                  <div className="card-title">{t.title}</div>
+                  <div className="muted">{t.taskId}</div>
+                </div>
+              ))}
+            </div>}
+          </div>
+
+          <div className="sidebar-section">
+            <div className="section-header" onClick={() => setCollapsedDenied(!collapsedDenied)}>
+              <h3>Denied ({denied.length})</h3>
+              <div className="collapse-indicator">{collapsedDenied ? '+' : '−'}</div>
+            </div>
+            {!collapsedDenied && <div className="section-list">
+              {denied.map((t) => (
                 <div
                   className={'card' + (selected === t.taskId ? ' selected' : '')}
                   key={t.taskId}
