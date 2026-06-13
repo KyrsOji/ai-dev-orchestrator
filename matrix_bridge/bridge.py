@@ -257,13 +257,37 @@ class MatrixBridge:
         # Iterate messages and handle commands. Ignore messages sent by the bot itself.
         for m in msgs:
             sender = m.get("sender")
+            # Support structured widget events (ai.dev.taskboard.action) in addition to plain text m.room.message
+            event_type = m.get("type") or m.get("event_type")
+            # If this is a Taskboard action event, process it specially (do not require 'body')
+            if event_type == "ai.dev.taskboard.action":
+                # Extract content dict from event
+                content = m.get("content") if isinstance(m.get("content"), dict) else None
+                # If 'content' is not present, try parsing JSON from body
+                if content is None:
+                    try:
+                        body_text = m.get("body", "")
+                        if isinstance(body_text, str) and body_text.strip():
+                            content = json.loads(body_text)
+                    except Exception:
+                        content = None
+                # Validate required fields: taskId and decision, and source must be 'element-widget'
+                if not content or not isinstance(content, dict):
+                    logger.warning("Ignored invalid taskboard action event sender=%s reason=no_content_or_invalid_json", sender)
+                    continue
+                task_id = content.get("taskId")
+                decision = content.get("decision")
+                source = content.get("source")
+                policy = content.get("policy")
+                if not task_id or not decision or source != "element-widget":
+                    logger.warning("Ignored invalid taskboard action event sender=%s reason=missing_or_invalid_fields taskId=%s decision=%s source=%s", sender, task_id, decision, source)
+                    continue
+                # Log the action capture (do not publish to Kafka yet)
+                logger.info("Taskboard action received taskId=%s decision=%s policy=%s sender=%s", task_id, decision, policy, sender)
+                # Do not publish any ai.dev.review.out yet; simply consume the event
+                continue
+            # Fallback to legacy text body handling for m.room.message
             body = m.get("body", "")
-            # Ignore empty
-            if not body:
-                continue
-            if self._bot_user and sender == self._bot_user:
-                # ignore our own messages
-                continue
             try:
                 # Reply-only handling: if message is a reply to a known approval event and body is exactly 'a' or 'd'
                 in_reply_to = None

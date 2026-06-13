@@ -169,12 +169,8 @@ class MatrixClient:
         timeline = room.get("timeline", {})
         events = timeline.get("events", [])
         for ev in events:
-            if ev.get("type") != "m.room.message":
-                continue
-            content = ev.get("content", {})
-            body = content.get("body")
-            if not body:
-                continue
+            ev_type = ev.get("type")
+            content = ev.get("content", {}) or {}
             # Try to extract reply-to information if present
             in_reply_to = None
             relates_to = content.get("m.relates_to")
@@ -189,14 +185,26 @@ class MatrixClient:
                     rel_type = relates_to.get("rel_type")
                     if rel_type == "m.in_reply_to" and isinstance(relates_to.get("event_id"), str):
                         in_reply_to = relates_to.get("event_id")
-            out.append({
+            base = {
                 "event_id": ev.get("event_id"),
                 "sender": ev.get("sender"),
-                "body": body,
                 "origin_server_ts": ev.get("origin_server_ts"),
                 "in_reply_to": in_reply_to,
                 "relates_to": relates_to if isinstance(relates_to, dict) else None,
-            })
+            }
+            if ev_type == "m.room.message":
+                body = content.get("body")
+                if not body:
+                    continue
+                base["body"] = body
+                out.append(base)
+            elif isinstance(ev_type, str) and ev_type.startswith("ai.dev."):
+                # capture structured widget events (e.g., ai.dev.taskboard.action)
+                base["type"] = ev_type
+                base["content"] = content
+                out.append(base)
+            else:
+                continue
         return out
 
     def whoami(self) -> Optional[str]:
