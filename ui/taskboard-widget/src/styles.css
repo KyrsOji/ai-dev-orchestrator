@@ -28,3 +28,28 @@ pre { white-space: pre-wrap; font-family: inherit; background: #fff; padding: 8p
 .toast-success { background: #16a34a; }
 .toast-warning { background: #f59e0b; color: #1f2937; }
 .toast-error { background: #ef4444; }
+
+/* workspace layout */
+.workspace { display: flex; gap: 12px; align-items: flex-start; }
+.sidebar { width: 320px; min-width: 300px; max-width: 350px; background: white; border-radius: 6px; padding: 8px; max-height: 80vh; overflow: auto; }
+.sidebar-section { margin-bottom: 12px; }
+.section-header { display: flex; justify-content: space-between; align-items: center; cursor: pointer; padding: 4px 0; }
+.section-header h3 { margin: 0; font-size: 16px; }
+.section-list { margin-top: 8px; }
+.collapse-indicator { font-size: 18px; color: #333; }
+.main-workspace { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.detail-pane { flex: 1; background: white; border-radius: 6px; padding: 12px; min-height: 400px; max-height: 80vh; display: flex; flex-direction: column; min-width: 0; }
+.task-detail { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+.task-header { margin-bottom: 8px; }
+.task-content { flex: 1; overflow: auto; padding-right: 8px; }
+.panel-openhands { min-height: 220px; }
+.panel-reviewer { min-height: 120px; }
+.panel-actions { }
+.panel-notes { }
+.workspace-actions { display: flex; gap: 8px; margin-top: 8px; border-top: 1px solid #eee; padding-top: 8px; background: white; position: sticky; bottom: 0; }
+.placeholder { color: #666; padding: 20px; }
+
+/* ensure cards look good in sidebar */
+.sidebar .card { margin-bottom: 6px; }
+.sidebar .card-title { font-size: 14px; }
+
