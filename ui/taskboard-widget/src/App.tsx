@@ -35,7 +35,7 @@ const Column = ({ title, children }: { title: string; children: React.ReactNode 
 
 function TaskDetail({ task, onSave }: { task: Task; onSave: (t: Task) => Promise<any> }) {
   const [local, setLocal] = useState<Task>(task)
-  const [notice, setNotice] = useState<string | null>(null)
+  const [toast, setToast] = useState<{ type: 'success' | 'warning' | 'error' | null; message: string | null }>({ type: null, message: null })
   useEffect(() => setLocal(task), [task])
 
   function update(change: Partial<Task>) {
@@ -45,8 +45,8 @@ function TaskDetail({ task, onSave }: { task: Task; onSave: (t: Task) => Promise
 
   async function handleSave() {
     await onSave(local)
-    setNotice('Saved locally')
-    setTimeout(() => setNotice(null), 3000)
+    setToast({ type: 'success', message: 'Saved locally' })
+    setTimeout(() => setToast({ type: null, message: null }), 3000)
   }
 
   function addAction() {
@@ -58,7 +58,7 @@ function TaskDetail({ task, onSave }: { task: Task; onSave: (t: Task) => Promise
     }
     const updated = { ...local, proposedActions: [...local.proposedActions, newAct] }
     setLocal(updated)
-    // Try to send new action to Matrix immediately
+    // Try to inform Matrix about the new action (does not change status)
     sendActionEvent('new_action', { newAction: newAct }).catch(() => {})
   }
 
@@ -127,27 +127,34 @@ function TaskDetail({ task, onSave }: { task: Task; onSave: (t: Task) => Promise
     }
 
     if (matrixAvailable) {
-      setNotice('Sending to Matrix...')
+      setToast({ type: 'warning', message: 'Sending to Matrix...' })
       const ok = await sendMatrixEvent(content)
       if (ok) {
-        setNotice('Action sent to Matrix')
-        setTimeout(() => setNotice(null), 3000)
+        setToast({ type: 'success', message: 'Action sent to Matrix' })
+        setTimeout(() => setToast({ type: null, message: null }), 3000)
         return true
       } else {
-        setNotice('Failed to send Matrix event')
-        setTimeout(() => setNotice(null), 3000)
+        setToast({ type: 'error', message: 'Failed to send Matrix event' })
+        setTimeout(() => setToast({ type: null, message: null }), 3000)
         return false
       }
     } else {
-      // fallback to local save
-      setNotice('Matrix widget API unavailable; changes saved locally only.')
+      // fallback to local save; only change status for explicit decisions
+      let newStatus = local.status
+      if (decision === 'approved') newStatus = 'approved'
+      else if (decision === 'denied') newStatus = 'denied'
+      else if (decision === 'deferred') newStatus = 'deferred'
+
       const updated: Task = {
         ...local,
-        status: decision === 'approved' ? 'approved' : decision === 'denied' ? 'denied' : 'deferred',
+        status: newStatus,
       }
+
       await onSave(updated)
       setLocal(updated)
-      setTimeout(() => setNotice(null), 3000)
+      // Saved locally is a success toast
+      setToast({ type: 'success', message: 'Saved locally' })
+      setTimeout(() => setToast({ type: null, message: null }), 3000)
       return false
     }
   }
@@ -160,12 +167,22 @@ function TaskDetail({ task, onSave }: { task: Task; onSave: (t: Task) => Promise
     await sendActionEvent('edited', { editedAction: a })
   }
 
+  const selectedActionObj = local.proposedActions.find((a) => a.id === local.selectedAction) || null
+
   return (
     <div className="task-detail">
       <h2>{local.title}</h2>
       <div className="muted">{local.taskId}</div>
 
-      {notice ? <div className="notice">{notice}</div> : null}
+      {/* connection/info */}
+      <div style={{ marginBottom: 8 }}>
+        <strong>Connection:</strong> {matrixAvailable ? 'Matrix Connected' : 'Local Mode'}
+      </div>
+
+      {/* toast */}
+      {toast.message ? (
+        <div className={`toast ${toast.type ? `toast-${toast.type}` : ''}`}>{toast.message}</div>
+      ) : null}
 
       <div className="panel">
         <h4>OpenHands output</h4>
@@ -180,11 +197,23 @@ function TaskDetail({ task, onSave }: { task: Task; onSave: (t: Task) => Promise
       <div className="panel">
         <h4>Proposed actions</h4>
         <button className="small" onClick={addAction} style={{ marginBottom: 8 }}>
-          + Add Action
+          + Create New Action
         </button>
+        <div style={{ marginBottom: 8 }}>
+          <strong>Selected:</strong>{' '}
+          {selectedActionObj ? `${selectedActionObj.description} (${selectedActionObj.id})` : 'None'}
+        </div>
         {local.proposedActions.map((a) => (
           <div key={a.id} className="action">
             <input
+              type="radio"
+              name={`selected-${local.taskId}`}
+              checked={local.selectedAction === a.id}
+              onChange={() => update({ selectedAction: a.id })}
+              title="Select this action"
+            />
+            <input
+              type="text"
               value={a.description}
               onChange={(e) => updateAction(a.id, { description: e.target.value })}
             />
@@ -199,7 +228,7 @@ function TaskDetail({ task, onSave }: { task: Task; onSave: (t: Task) => Promise
               Remove
             </button>
             <button className="small" onClick={() => sendEditAction(a)} style={{ marginLeft: 8 }}>
-              Send Edit
+              Submit Edited Action
             </button>
           </div>
         ))}
@@ -212,7 +241,9 @@ function TaskDetail({ task, onSave }: { task: Task; onSave: (t: Task) => Promise
 
       <div className="buttons">
         <button onClick={handleSave}>Save</button>
-        <button onClick={() => doDecision('approved')}>Approve</button>
+        <button onClick={() => doDecision('approved')} disabled={!local.selectedAction}>
+          Approve Selected Action
+        </button>
         <button onClick={() => doDecision('denied')}>Deny</button>
         <button onClick={() => doDecision('deferred')}>Defer</button>
       </div>
