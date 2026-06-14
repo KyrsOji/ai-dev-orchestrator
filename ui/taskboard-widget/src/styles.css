@@ -85,3 +85,109 @@ pre { white-space: pre-wrap; font-family: inherit; background: #fff; padding: 8p
   padding: 6px;
 }
 
+
+/* Mobile and header adjustments */
+.mobile-action-bar { display: none; }
+.app-header { display:flex; align-items:center; justify-content:space-between; gap:12px; }
+.app-header h1 { margin:0; font-size:18px; }
+.header-right { display:flex; align-items:center; gap:8px; }
+.developer-info { margin-top:8px; }
+.card-sub { display:flex; gap:8px; align-items:center; font-size:12px; color:#666; overflow:hidden; }
+.card-sub .card-reviewer { flex:1; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.card-sub .card-action { color:#444; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width: 40%; }
+
+@media (max-width: 600px) {
+  .app { padding: 10px; }
+  .app-header h1 { font-size:16px; }
+  .connection-status { margin-left:8px; font-size:12px; padding:4px 6px; }
+  .board { flex-direction: column; }
+  .columns { width:100%; flex-direction:column; }
+  .column { min-width:0; max-height:none; }
+  .card { padding:10px 12px; }
+  .card-title { font-size:15px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .card-sub { display:block; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .card-sub span { display:inline-block; margin-right:8px; max-width: 48%; vertical-align:middle; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .detail-pane { padding-bottom: 90px; }
+  .action input[type="text"], .action select, .action button.small { display:none !important; }
+  .mobile-action-bar { display:flex; position:fixed; bottom:0; left:0; right:0; background:#fff; padding:8px 10px; gap:8px; justify-content:space-around; border-top:1px solid #eee; z-index:1000; }
+  .buttons { display:none; }
+  .panel { margin-bottom:12px; }
+  .task-detail pre { max-height:200px; overflow:auto; }
+}
+
+
+/* FAB and Bottom Sheet for mobile action editor */
+.fab {
+  position: fixed;
+  right: 12px;
+  bottom: 74px; /* sit above the mobile action bar */
+  z-index: 1100;
+  background: #3b82f6;
+  color: #fff;
+  border-radius: 999px;
+  padding: 10px 14px;
+  font-weight: 700;
+  box-shadow: 0 6px 18px rgba(0,0,0,0.12);
+  border: none;
+}
+
+.bottom-sheet-overlay {
+  position: fixed;
+  left: 0; right: 0; top: 0; bottom: 0;
+  background: rgba(0,0,0,0.32);
+  display: flex;
+  align-items: flex-end;
+  z-index: 1200;
+}
+
+.bottom-sheet {
+  width: 100%;
+  background: #fff;
+  border-top-left-radius: 12px;
+  border-top-right-radius: 12px;
+  padding: 12px;
+  box-shadow: 0 -8px 24px rgba(0,0,0,0.12);
+}
+
+.sheet-option {
+  padding: 12px;
+  font-weight: 600;
+  border-radius: 8px;
+  margin-bottom: 8px;
+  background: #f6f8fb;
+  cursor: pointer;
+  text-align: center;
+}
+
+.sheet-option.disabled {
+  opacity: 0.5;
+  pointer-events: none;
+  background: #f1f1f1;
+}
+
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.32);
+  z-index: 1200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.modal {
+  width: 92%;
+  max-width: 520px;
+  background: #fff;
+  padding: 14px;
+  border-radius: 10px;
+}
+
+.form-row { margin-bottom: 8px; }
+.form-row label { display: block; font-weight: 600; margin-bottom: 6px; }
+.form-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 12px; }
+
+@media (max-width: 600px) {
+  .fab { display: block; }
+}
+

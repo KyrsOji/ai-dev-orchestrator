@@ -112,7 +112,69 @@ app.post('/api/task/save', (req, res) => {
 app.get('/health', (req, res) => res.send('ok'));
 
 const port = process.env.PORT || 3000;
-app.use(express.static(path.join(__dirname, 'dist')));
+
+// Serve static assets under /taskboard to match Vite base: '/taskboard/'
+const distPath = path.join(__dirname, 'dist');
+app.use('/taskboard', express.static(distPath));
+
+// Duplicate API endpoints under /taskboard/api/* so the app can fetch using the built BASE_URL
+app.get('/taskboard/api/tasks', async (req, res) => {
+  // Try aggregator HTTP feed first (local read-model service)
+  const AGG_URL = process.env.AGG_URL || 'http://127.0.0.1:8000/tasks';
+  try {
+    const { URL } = require('url');
+    const url = new URL(AGG_URL);
+    const lib = url.protocol === 'https:' ? require('https') : require('http');
+
+    const result = await new Promise((resolve) => {
+      const r = lib.get(AGG_URL, (resp) => {
+        let data = '';
+        resp.on('data', (chunk) => (data += chunk));
+        resp.on('end', () => {
+          try {
+            const json = JSON.parse(data);
+            resolve({ ok: true, json });
+          } catch (e) {
+            resolve({ ok: false });
+          }
+        });
+      });
+      r.on('error', () => resolve({ ok: false }));
+      r.setTimeout(1500, () => {
+        try { r.abort(); } catch (e) {}
+        resolve({ ok: false });
+      });
+    });
+
+    if (result && result.ok) return res.json(result.json);
+  } catch (e) {
+    console.log('Aggregator proxy failed, falling back to file (taskboard/api):', e && e.message ? e.message : e);
+  }
+
+  const data = readData();
+  res.json(data);
+});
+
+app.post('/taskboard/api/task/save', (req, res) => {
+  const task = req.body;
+  const data = readData();
+  const idx = data.findIndex((t) => t.taskId === task.taskId);
+  if (idx >= 0) data[idx] = task;
+  else data.push(task);
+  writeData(data);
+  res.json(data);
+});
+
+// SPA fallback for /taskboard/* (serve index.html)
+app.get(['/taskboard', '/taskboard/'], (req, res) => {
+  res.sendFile(path.join(distPath, 'index.html'));
+});
+app.get('/taskboard/*', (req, res, next) => {
+  // allow /taskboard/api/* to be handled by the api routes above
+  if (req.path.startsWith('/taskboard/api/')) return next();
+  res.sendFile(path.join(distPath, 'index.html'));
+});
+
 app.listen(port, () => {
   console.log('Server listening on port', port);
 });
