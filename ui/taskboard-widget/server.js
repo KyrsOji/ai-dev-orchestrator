@@ -236,6 +236,149 @@ app.get('/taskboard/api/runner-status', (req, res) => {
   res.json({ status: dry ? 'dry-run' : 'connected' });
 });
 
+// Agent registry endpoints — returns live agent list with freshness
+app.get('/api/agents', (req, res) => {
+  const registryPath = process.env.AGENT_REGISTRY_STORAGE || '/tmp/ai-dev-agent-registry.json'
+  try {
+    if (!fs.existsSync(registryPath)) throw new Error('registry file missing')
+    const raw = fs.readFileSync(registryPath, 'utf8')
+    const parsed = JSON.parse(raw || '{}')
+    let items = []
+    if (Array.isArray(parsed)) items = parsed
+    else if (parsed && typeof parsed === 'object') items = Object.keys(parsed).map((k) => parsed[k])
+    const now = Date.now()
+    const agents = items.map((a) => {
+      const lastSeen = a.lastSeen || a.last_seen || null
+      let freshnessSeconds = null
+      let isFresh = false
+      if (lastSeen) {
+        const t = new Date(lastSeen).getTime()
+        if (!Number.isNaN(t)) {
+          freshnessSeconds = Math.floor((now - t) / 1000)
+          isFresh = freshnessSeconds <= 300
+        }
+      }
+      return {
+        agentId: a.agentId || a.id || (a.agent || ''),
+        hostname: a.hostname || a.host || '',
+        roles: a.roles || [],
+        status: a.status || 'unknown',
+        cpuCount: typeof a.cpuCount === 'number' ? a.cpuCount : (typeof a.cpu === 'number' ? a.cpu : null),
+        memoryGb: typeof a.memoryGb === 'number' ? a.memoryGb : (typeof a.memory_gb === 'number' ? a.memory_gb : null),
+        diskFreeGb: typeof a.diskFreeGb === 'number' ? a.diskFreeGb : (typeof a.disk_free_gb === 'number' ? a.disk_free_gb : null),
+        loadAverage: typeof a.loadAverage === 'number' ? a.loadAverage : (typeof a.load_avg === 'number' ? a.load_avg : null),
+        lastSeen: lastSeen,
+        freshnessSeconds,
+        isFresh,
+      }
+    })
+    return res.json({ agents })
+  } catch (e) {
+    console.warn('Failed to read agent registry', e && e.message ? e.message : e)
+    // static fallback
+    const fallback = [
+      {
+        agentId: 'ofbiz-dev-01',
+        hostname: 'ubuntu-16gb-sin-1',
+        roles: ['ofbiz'],
+        status: 'idle',
+        cpuCount: 8,
+        memoryGb: 15.2425,
+        diskFreeGb: 272.77,
+        loadAverage: 3.36,
+        lastSeen: new Date().toISOString(),
+        freshnessSeconds: 0,
+        isFresh: true,
+      },
+      {
+        agentId: 'future-agent-placeholder',
+        hostname: 'another-server',
+        roles: ['general'],
+        status: 'idle',
+        cpuCount: 2,
+        memoryGb: 4,
+        diskFreeGb: 50,
+        loadAverage: 0.1,
+        lastSeen: new Date(Date.now() - 1000 * 60 * 60).toISOString(),
+        freshnessSeconds: Math.floor(60 * 60),
+        isFresh: false,
+      },
+    ]
+    return res.json({ agents: fallback, warning: `Failed to read registry at ${registryPath}: ${String(e && e.message ? e.message : e)}` })
+  }
+})
+
+// Duplicate endpoint under /taskboard for app BASE_URL compatibility
+app.get('/taskboard/api/agents', (req, res) => {
+  const registryPath = process.env.AGENT_REGISTRY_STORAGE || '/tmp/ai-dev-agent-registry.json'
+  try {
+    if (!fs.existsSync(registryPath)) throw new Error('registry file missing')
+    const raw = fs.readFileSync(registryPath, 'utf8')
+    const parsed = JSON.parse(raw || '{}')
+    let items = []
+    if (Array.isArray(parsed)) items = parsed
+    else if (parsed && typeof parsed === 'object') items = Object.keys(parsed).map((k) => parsed[k])
+    const now = Date.now()
+    const agents = items.map((a) => {
+      const lastSeen = a.lastSeen || a.last_seen || null
+      let freshnessSeconds = null
+      let isFresh = false
+      if (lastSeen) {
+        const t = new Date(lastSeen).getTime()
+        if (!Number.isNaN(t)) {
+          freshnessSeconds = Math.floor((now - t) / 1000)
+          isFresh = freshnessSeconds <= 300
+        }
+      }
+      return {
+        agentId: a.agentId || a.id || (a.agent || ''),
+        hostname: a.hostname || a.host || '',
+        roles: a.roles || [],
+        status: a.status || 'unknown',
+        cpuCount: typeof a.cpuCount === 'number' ? a.cpuCount : (typeof a.cpu === 'number' ? a.cpu : null),
+        memoryGb: typeof a.memoryGb === 'number' ? a.memoryGb : (typeof a.memory_gb === 'number' ? a.memory_gb : null),
+        diskFreeGb: typeof a.diskFreeGb === 'number' ? a.diskFreeGb : (typeof a.disk_free_gb === 'number' ? a.disk_free_gb : null),
+        loadAverage: typeof a.loadAverage === 'number' ? a.loadAverage : (typeof a.load_avg === 'number' ? a.load_avg : null),
+        lastSeen: lastSeen,
+        freshnessSeconds,
+        isFresh,
+      }
+    })
+    return res.json({ agents })
+  } catch (e) {
+    console.warn('Failed to read agent registry', e && e.message ? e.message : e)
+    const fallback = [
+      {
+        agentId: 'ofbiz-dev-01',
+        hostname: 'ubuntu-16gb-sin-1',
+        roles: ['ofbiz'],
+        status: 'idle',
+        cpuCount: 8,
+        memoryGb: 15.2425,
+        diskFreeGb: 272.77,
+        loadAverage: 3.36,
+        lastSeen: new Date().toISOString(),
+        freshnessSeconds: 0,
+        isFresh: true,
+      },
+      {
+        agentId: 'future-agent-placeholder',
+        hostname: 'another-server',
+        roles: ['general'],
+        status: 'idle',
+        cpuCount: 2,
+        memoryGb: 4,
+        diskFreeGb: 50,
+        loadAverage: 0.1,
+        lastSeen: new Date(Date.now() - 1000 * 60 * 60).toISOString(),
+        freshnessSeconds: Math.floor(60 * 60),
+        isFresh: false,
+      },
+    ]
+    return res.json({ agents: fallback, warning: `Failed to read registry at ${registryPath}: ${String(e && e.message ? e.message : e)}` })
+  }
+})
+
 
 // Standalone decision API for mobile / direct browser usage
 // POST /taskboard/api/task/decision
@@ -284,8 +427,15 @@ app.post('/taskboard/api/task/decision', async (req, res) => {
       }
     } else if (selectedActionPayload && typeof selectedActionPayload === 'object' && selectedActionPayload.id) {
       // If client provided a partial object with an id, try to reconcile with saved task
+      // Merge client-provided fields (e.g., payload.routing) with the stored action so routing is preserved
       const existingAction = (found && Array.isArray(found.proposedActions)) ? found.proposedActions.find((a) => a && a.id === selectedActionPayload.id) : null;
-      if (existingAction) selectedActionPayload = existingAction;
+      if (existingAction) {
+        // shallow merge: existingAction fields, then client-provided fields override
+        const merged = Object.assign({}, existingAction, selectedActionPayload);
+        // merge payloads specifically
+        merged.payload = Object.assign({}, existingAction.payload || {}, selectedActionPayload.payload || {});
+        selectedActionPayload = merged;
+      }
     }
 
     const review_msg = {
