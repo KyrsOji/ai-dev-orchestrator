@@ -3,6 +3,7 @@ const path = require('path');
 const fs = require('fs');
 const bodyParser = require('body-parser');
 const cors = require('cors');
+const { spawnSync } = require('child_process');
 
 const app = express();
 const DATA_FILE = '/tmp/taskboard-mvp.json';
@@ -10,12 +11,17 @@ const DATA_FILE = '/tmp/taskboard-mvp.json';
 app.use(cors());
 app.use(bodyParser.json());
 
+function genId(prefix = 'TASK-') {
+  return prefix + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+}
+
 function readData() {
   try {
     if (!fs.existsSync(DATA_FILE)) {
+      // Create sample tasks with generated IDs so UIs don't accidentally rely on a static TASK-1 placeholder
       const sample = [
         {
-          taskId: 'TASK-1',
+          taskId: genId('TASK-'),
           title: 'Fix memory leak in service A',
           status: 'pending_review',
           openhandsResponse: 'OpenHands suggests patch xyz to close file handles.',
@@ -27,7 +33,7 @@ function readData() {
           notes: ''
         },
         {
-          taskId: 'TASK-2',
+          taskId: genId('TASK-'),
           title: 'Update README for new API',
           status: 'approved',
           openhandsResponse: 'OpenHands created draft doc changes.',
@@ -97,8 +103,14 @@ app.get('/api/tasks', async (req, res) => {
 });
 
 app.post('/api/task/save', (req, res) => {
-  const task = req.body;
+  const task = req.body || {};
   const data = readData();
+
+  // Ensure a stable taskId exists for saved tasks in standalone mode
+  if (!task.taskId || typeof task.taskId !== 'string' || !task.taskId.trim()) {
+    task.taskId = genId('TASK-');
+  }
+
   const idx = data.findIndex((t) => t.taskId === task.taskId);
   if (idx >= 0) {
     data[idx] = task;
@@ -156,14 +168,160 @@ app.get('/taskboard/api/tasks', async (req, res) => {
 });
 
 app.post('/taskboard/api/task/save', (req, res) => {
-  const task = req.body;
+  const task = req.body || {};
   const data = readData();
+
+  if (!task.taskId || typeof task.taskId !== 'string' || !task.taskId.trim()) {
+    task.taskId = genId('TASK-');
+  }
+
   const idx = data.findIndex((t) => t.taskId === task.taskId);
   if (idx >= 0) data[idx] = task;
   else data.push(task);
   writeData(data);
   res.json(data);
 });
+
+// Standalone decision API for mobile / direct browser usage
+// POST /taskboard/api/task/decision
+// Expects JSON body containing taskId, decision, policy, selectedAction, editedAction, newAction, notes, source: 'taskboard-standalone', createdAt
+// Requires Authorization: Bearer <TASKBOARD_API_TOKEN>
+app.post('/taskboard/api/task/decision', async (req, res) => {
+  try {
+    const serverToken = process.env.TASKBOARD_API_TOKEN;
+    if (!serverToken) {
+      return res.status(500).json({ error: 'Server misconfiguration: TASKBOARD_API_TOKEN not set' });
+    }
+
+    const authHeader = req.headers.authorization || req.headers.Authorization || '';
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({ error: 'Missing Authorization header' });
+    }
+    const provided = authHeader.slice('Bearer '.length).trim();
+    if (provided !== serverToken) {
+      return res.status(403).json({ error: 'Invalid token' });
+    }
+
+    const body = req.body || {};
+    const taskId = body.taskId;
+    const decision = body.decision;
+    const source = body.source;
+    const allowed = ['approved', 'denied', 'deferred'];
+
+    if (!taskId || !decision || !allowed.includes(decision) || source !== 'taskboard-standalone') {
+      return res.status(400).json({ error: 'Invalid payload: taskId, decision and source required; decision must be one of approved|denied|deferred and source must be taskboard-standalone' });
+    }
+
+    // Ensure the taskId refers to a saved task — prevent approving the static sample/placeholder
+    const existing = readData();
+    const found = existing.find((t) => t && t.taskId === taskId);
+    if (!found) {
+      return res.status(400).json({ error: `Unknown or missing taskId: ${String(taskId)}. In standalone mode you must save the task (with a stable taskId) before sending decisions.` });
+    }
+
+    // Normalize selectedAction: accept either a full action object or an action ID string
+    let selectedActionPayload = body.selectedAction || null;
+    if (typeof selectedActionPayload === 'string') {
+      const actionId = selectedActionPayload;
+      selectedActionPayload = (found && Array.isArray(found.proposedActions)) ? found.proposedActions.find((a) => a && a.id === actionId) : null;
+      if (!selectedActionPayload) {
+        return res.status(400).json({ error: `selectedAction id '${actionId}' not found in task ${taskId}` });
+      }
+    } else if (selectedActionPayload && typeof selectedActionPayload === 'object' && selectedActionPayload.id) {
+      // If client provided a partial object with an id, try to reconcile with saved task
+      const existingAction = (found && Array.isArray(found.proposedActions)) ? found.proposedActions.find((a) => a && a.id === selectedActionPayload.id) : null;
+      if (existingAction) selectedActionPayload = existingAction;
+    }
+
+    const review_msg = {
+      taskId: taskId,
+      decision: decision,
+      policy: body.policy || null,
+      reason: body.notes || null,
+      approver: body.approver || 'taskboard-standalone',
+      source: source,
+      selectedAction: selectedActionPayload,
+      editedAction: body.editedAction || null,
+      newAction: body.newAction || null,
+      createdAt: body.createdAt || new Date().toISOString(),
+    };
+
+    // Publish to Kafka topic ai.dev.review.out using existing CLI or Python kafka helper
+    const topic = 'ai.dev.review.out';
+    const clientConfig = process.env.KAFKA_CLIENT_CONFIG;
+
+    // Helper to find CLI in PATH if not explicitly provided
+    const producerEnv = process.env.KAFKA_PRODUCER_CMD;
+    function which(cmd) {
+      try {
+        const out = spawnSync('which', [cmd], { encoding: 'utf8' });
+        if (out && out.status === 0) return out.stdout.trim();
+      } catch (e) {}
+      return null;
+    }
+
+    let producer = null;
+    if (producerEnv) {
+      try { if (fs.existsSync(producerEnv)) producer = producerEnv; } catch (e) { /* ignore */ }
+    }
+    if (!producer) {
+      producer = which('kafka-console-producer.sh') || which('kafka-console-producer');
+    }
+
+    // Try CLI producer first (so KAFKA_CLIENT_CONFIG can be honored)
+    if (producer) {
+      const args = ['--bootstrap-server', process.env.KAFKA_BOOTSTRAP || 'localhost:9092', '--topic', topic];
+      if (clientConfig) args.push('--producer.config', clientConfig);
+      try {
+        const proc = spawnSync(producer, args, { input: JSON.stringify(review_msg) + '\n', encoding: 'utf8', timeout: 30000, env: process.env });
+        const meta = { topic, returnCode: proc.status, stdout: (proc.stdout || '').slice(-4000), stderr: (proc.stderr || '').slice(-4000), used_cli: true };
+        if (proc.status === 0) {
+          return res.json({ ok: true, published: true, meta });
+        } else {
+          console.error('Producer CLI failed', meta);
+        }
+      } catch (e) {
+        console.error('Producer CLI exception', e && e.message ? e.message : e);
+      }
+    }
+
+    // Fallback: attempt to use Python matrix_bridge.kafka_client (respects KAFKA_CLIENT_CONFIG)
+    try {
+      const pythonCode = `import json, sys\nfrom matrix_bridge.kafka_client import KafkaClient\nkc = KafkaClient(dry_run=False)\nmsg = json.loads(sys.stdin.read())\nsuccess, meta = kc.publish('${topic}', msg)\nprint(json.dumps({'success': success, 'meta': meta}))\nif not success:\n    sys.exit(2)\n`;
+      const env = Object.assign({}, process.env);
+      // Ensure Python can import matrix_bridge from repo root
+      env.PYTHONPATH = path.resolve(__dirname, '..', '..');
+      const py = spawnSync('python3', ['-c', pythonCode], { input: JSON.stringify(review_msg), encoding: 'utf8', env: env, timeout: 30000 });
+      const out = (py.stdout || '').trim();
+      let parsed = null;
+      try { parsed = JSON.parse(out || '{}'); } catch (e) { parsed = null; }
+      const meta = { topic, returnCode: py.status, stdout: out.slice(-4000), stderr: (py.stderr || '').slice(-4000), used_python_wrapper: true, parsed: parsed };
+      if (py.status === 0) {
+        return res.json({ ok: true, published: true, meta });
+      } else {
+        console.error('Python kafka wrapper failed', meta);
+        return res.status(502).json({ ok: false, error: 'Failed to publish to Kafka', meta });
+      }
+    } catch (e) {
+      console.error('Python kafka fallback exception', e && e.message ? e.message : e);
+      return res.status(502).json({ ok: false, error: 'Failed to publish to Kafka', detail: e && e.message ? e.message : String(e) });
+    }
+  } catch (e) {
+    console.error('task decision handler error', e && e.message ? e.message : e);
+    return res.status(500).json({ ok: false, error: 'internal server error' });
+  }
+});
+
+// Serve manifest and service-worker explicitly as static files to avoid SPA fallback
+app.get('/taskboard/manifest.json', (req, res) => {
+  res.type('application/json');
+  res.sendFile(path.join(distPath, 'manifest.json'));
+});
+app.get('/taskboard/service-worker.js', (req, res) => {
+  res.type('application/javascript');
+  res.sendFile(path.join(distPath, 'service-worker.js'));
+});
+
 
 // SPA fallback for /taskboard/* (serve index.html)
 app.get(['/taskboard', '/taskboard/'], (req, res) => {
