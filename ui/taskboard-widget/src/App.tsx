@@ -132,6 +132,7 @@ const TaskCard = ({ t, onClick }: { t: any; onClick?: () => void }) => {
         {agentObj && isStale ? (<span style={{ marginLeft: 8, color: '#b45309', fontSize: 12 }}>⚠️ stale</span>) : null}
         <span style={{ marginLeft: 8 }}>{role}</span>
         <span style={{ marginLeft: 8 }}>{timeAgo(last)}</span>
+        {t && t.parentTaskId ? (<span style={{ marginLeft: 8, fontSize: 12, color: '#374151' }}>Parent: {t.parentTaskId}</span>) : null}
       </div>
       <div className="muted" style={{ marginTop: 6 }}>{summary}</div>
     </div>
@@ -1100,6 +1101,29 @@ function TaskDetail({
           </div>
         </div>
 
+        {/* Parent link and Follow-up list */}
+        {local && local.parentTaskId ? (
+          <div className="panel" style={{ marginBottom: 8 }}>
+            <strong>Parent Task:</strong> <button className="small" onClick={() => { try { if (openTask) openTask(local.parentTaskId as string) } catch (e) {} }} style={{ marginLeft: 8 }}>{local.parentTaskId}</button>
+          </div>
+        ) : null}
+
+        {local && Array.isArray(local.followUpIds) && local.followUpIds.length > 0 ? (
+          <div className="panel" style={{ marginBottom: 8 }}>
+            <strong>Follow-up Tasks</strong>
+            <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {local.followUpIds.map((id) => (
+                <div key={id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div style={{ fontSize: 14 }}>{id}</div>
+                  <div>
+                    <button className="small" onClick={() => { try { if (openTask) openTask(id) } catch (e) {} }}>Open</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : null}
+
         <div className="messages" ref={messagesRef} style={{ overflowY: 'auto', maxHeight: '60vh', padding: 12 }}>
           {messages.map((m) => {
             const isRunner = m.data && m.data._runner_marker
@@ -1206,6 +1230,26 @@ function TaskDetail({
 
     <div className="task-detail">
       <h2>{local.title}</h2>
+      {local && local.parentTaskId ? (
+        <div style={{ marginBottom: 8 }}>
+          <strong>Parent Task:</strong> <button className="small" onClick={() => { try { if (openTask) openTask(local.parentTaskId as string) } catch (e) {} }} style={{ marginLeft: 8 }}>{local.parentTaskId}</button>
+        </div>
+      ) : null}
+
+      {local && Array.isArray(local.followUpIds) && local.followUpIds.length > 0 ? (
+        <div style={{ marginBottom: 8 }}>
+          <strong>Follow-up Tasks:</strong>
+          <div style={{ marginTop: 6 }}>
+            {local.followUpIds.map((id) => (
+              <div key={id} style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginTop:6 }}>
+                <div>{id}</div>
+                <div><button className="small" onClick={() => { try { if (openTask) openTask(id) } catch (e) {} }}>Open</button></div>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
+
       <div style={{ marginBottom: 8 }}>
         <label style={{ display: 'block', fontSize: 12 }}>Task ID</label>
         <input
