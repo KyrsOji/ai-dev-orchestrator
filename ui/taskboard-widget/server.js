@@ -11,6 +11,26 @@ const DATA_FILE = '/tmp/taskboard-mvp.json';
 app.use(cors());
 app.use(bodyParser.json());
 
+// Early guard: reject path-traversal attempts targeting results endpoints
+app.use((req, res, next) => {
+  try {
+    const raw = req.url || '';
+    const orig = req.originalUrl || '';
+    // Only flag when URL targets results endpoints and contains a '..' path-segment
+    if ((/\/api\/results\//).test(raw) && (/(^|\/)\.\.($|\/)/).test(raw)) {
+      console.error('EARLY-GUARD-RAW', raw, orig);
+      return res.status(400).json({ error: 'Invalid taskId' });
+    }
+    if ((/\/api\/results\//).test(orig) && (/(^|\/)\.\.($|\/)/).test(orig)) {
+      console.error('EARLY-GUARD-ORIG', raw, orig);
+      return res.status(400).json({ error: 'Invalid taskId' });
+    }
+  } catch (e) {
+    console.error('EARLY-GUARD-ERR', e && e.message ? e.message : e);
+  }
+  next();
+});
+
 function genId(prefix = 'TASK-') {
   // Support PWA-YYYYMMDD-HHMMSS or TASK-<timestamp>
   const now = new Date();
@@ -137,8 +157,64 @@ app.post('/api/task/save', (req, res) => {
 app.get('/health', (req, res) => res.send('ok'));
 
 const port = process.env.PORT || 3000;
+// Catch-all routes for results that include extra path segments (handle traversal attempts)
+app.get('/api/results/*', (req, res) => {
+  const raw = (req.originalUrl || req.url || '');
+  const prefix = '/api/results/';
+  let idPart = '';
+  const idx = raw.indexOf(prefix);
+  if (idx !== -1) idPart = raw.slice(idx + prefix.length).split('?')[0];
+  try { idPart = decodeURIComponent(idPart); } catch (e) {}
+  // reject if contains path separators or traversal
+  if (!idPart || idPart.indexOf('/') !== -1 || /(\.|\.)/.test(idPart) && /(^|\/)\.\.($|\/)/.test(idPart)) {
+    return res.status(400).json({ error: 'Invalid taskId' });
+  }
+  // final sanitize against allowed chars
+  const SAFE_RE = /^[A-Za-z0-9_.-]+$/;
+  if (!SAFE_RE.test(idPart)) return res.status(400).json({ error: 'Invalid taskId' });
+  const out = buildResultForTask(idPart);
+  if (out && out.error === 'invalid_taskId' && out.statusCode === 400) return res.status(400).json({ error: 'Invalid taskId' });
+  return res.json(out);
+});
+app.get('/taskboard/api/results/*', (req, res) => {
+  const raw = (req.originalUrl || req.url || '');
+  const prefix = '/taskboard/api/results/';
+  let idPart = '';
+  const idx = raw.indexOf(prefix);
+  if (idx !== -1) idPart = raw.slice(idx + prefix.length).split('?')[0];
+  try { idPart = decodeURIComponent(idPart); } catch (e) {}
+  if (!idPart || idPart.indexOf('/') !== -1 || /(\.|\.)/.test(idPart) && /(^|\/)\.\.($|\/)/.test(idPart)) {
+    return res.status(400).json({ error: 'Invalid taskId' });
+  }
+  const SAFE_RE = /^[A-Za-z0-9_.-]+$/;
+  if (!SAFE_RE.test(idPart)) return res.status(400).json({ error: 'Invalid taskId' });
+  const out = buildResultForTask(idPart);
+  if (out && out.error === 'invalid_taskId' && out.statusCode === 400) return res.status(400).json({ error: 'Invalid taskId' });
+  return res.json(out);
+});
+
+
 
 // Serve static assets under /taskboard to match Vite base: '/taskboard/'
+// Reject obvious path-traversal attempts early for results endpoints
+app.use('/api/results', (req, res, next) => {
+  const url = req.originalUrl || '';
+  // detect '..' path segments
+  if ((/(^|\/)\.\.($|\/)/).test(url)) {
+    return res.status(400).json({ error: 'Invalid taskId' });
+  }
+  next();
+});
+app.use('/taskboard/api/results', (req, res, next) => {
+  const url = req.originalUrl || '';
+  if ((/(^|\/)\.\.($|\/)/).test(url)) {
+    return res.status(400).json({ error: 'Invalid taskId' });
+  }
+  next();
+});
+
+// Serve static assets under /taskboard to match Vite base: '/taskboard/'
+
 const distPath = path.join(__dirname, 'dist');
 app.use('/taskboard', express.static(distPath));
 
@@ -212,18 +288,108 @@ function writeResults(obj) {
   try { fs.writeFileSync(RESULTS_FILE, JSON.stringify(obj, null, 2)); } catch (e) { console.error('writeResults error', e); }
 }
 
-// GET result for a specific taskId (local store or TODO)
+// Build a results response for a task by inspecting runner run directory
+function buildResultForTask(id) {
+  const SAFE_RE = /^[A-Za-z0-9_.-]+$/;
+  if (!id || !SAFE_RE.test(id)) {
+    return { error: 'invalid_taskId', statusCode: 400 };
+  }
+  const RUN_BASE = process.env.RUN_BASE || '/var/lib/ai-dev-runner/openhands-runs';
+  const baseResolved = path.resolve(RUN_BASE);
+  const runDir = path.resolve(RUN_BASE, id);
+  if (!runDir.startsWith(baseResolved + path.sep) && runDir !== baseResolved) {
+    return { error: 'invalid_taskId', statusCode: 400 };
+  }
+
+  try {
+    if (!fs.existsSync(runDir) || !fs.statSync(runDir).isDirectory()) {
+      const all = readResults();
+      if (all && all[id]) return all[id];
+      return { taskId: id, found: false, status: 'pending', summary: 'Waiting for runner result.', updatedAt: null };
+    }
+
+    const execPath = path.join(runDir, 'execution-report.json');
+    const taskJsonPath = path.join(runDir, 'task.json');
+    const taskMdPath = path.join(runDir, 'task.md');
+
+    let executionReport = null;
+    let taskObj = null;
+    let taskMarkdown = null;
+
+    if (fs.existsSync(execPath)) {
+      try { executionReport = JSON.parse(fs.readFileSync(execPath, 'utf8')); } catch (e) { executionReport = null; }
+    }
+    if (fs.existsSync(taskJsonPath)) {
+      try { taskObj = JSON.parse(fs.readFileSync(taskJsonPath, 'utf8')); } catch (e) { taskObj = null; }
+    }
+    if (fs.existsSync(taskMdPath)) {
+      try { taskMarkdown = fs.readFileSync(taskMdPath, 'utf8'); } catch (e) { taskMarkdown = null; }
+    }
+
+    let status = 'pending';
+    if (executionReport && executionReport.status) status = executionReport.status;
+    else if (taskObj) status = 'prepared';
+    else status = 'pending';
+
+    let summary = 'Waiting for runner result.';
+    if (executionReport && executionReport.summary) summary = executionReport.summary;
+    else if (executionReport && executionReport.status) summary = `Runner completed with status: ${executionReport.status}`;
+    else if (taskObj) summary = 'Runner prepared task artifacts.';
+    else summary = 'Waiting for runner result.';
+
+    // compute updatedAt using latest mtime among available files
+    let updatedAt = null;
+    const mtimes = [];
+    [execPath, taskJsonPath, taskMdPath].forEach((p) => {
+      try {
+        if (fs.existsSync(p)) {
+          const st = fs.statSync(p);
+          if (st && st.mtime) mtimes.push(st.mtime.getTime());
+        }
+      } catch (e) {}
+    });
+    if (mtimes.length) {
+      const mx = Math.max.apply(null, mtimes);
+      updatedAt = new Date(mx).toISOString();
+    }
+
+    return {
+      taskId: id,
+      found: true,
+      runDirectory: runDir,
+      executionReport: executionReport || null,
+      task: taskObj || null,
+      taskMarkdown: taskMarkdown || null,
+      status,
+      summary,
+      updatedAt
+    };
+  } catch (e) {
+    console.error('results lookup error', e && e.message ? e.message : e);
+    const all = readResults();
+    if (all && all[id]) return all[id];
+    return { taskId: id, found: false, status: 'pending', summary: 'Waiting for runner result.', updatedAt: null };
+  }
+}
+
+// GET result for a specific taskId - public API
 app.get('/api/results/:taskId', (req, res) => {
   const id = req.params.taskId;
-  const all = readResults();
-  if (all && all[id]) return res.json(all[id]);
-  return res.json({ status: 'waiting', message: 'Waiting for OpenHands result... (TODO: integrate real result stream)' });
+  const out = buildResultForTask(id);
+  if (out && out.error === 'invalid_taskId' && out.statusCode === 400) {
+    return res.status(400).json({ error: 'Invalid taskId' });
+  }
+  return res.json(out);
 });
+
+// Alias under /taskboard for BASE_URL compatibility
 app.get('/taskboard/api/results/:taskId', (req, res) => {
   const id = req.params.taskId;
-  const all = readResults();
-  if (all && all[id]) return res.json(all[id]);
-  return res.json({ status: 'waiting', message: 'Waiting for OpenHands result... (TODO: integrate real result stream)' });
+  const out = buildResultForTask(id);
+  if (out && out.error === 'invalid_taskId' && out.statusCode === 400) {
+    return res.status(400).json({ error: 'Invalid taskId' });
+  }
+  return res.json(out);
 });
 
 // Runner status endpoint (useful for UI status pill)
@@ -418,7 +584,7 @@ app.post('/taskboard/api/task/decision', async (req, res) => {
     }
 
     // Normalize selectedAction: accept either a full action object or an action ID string
-    let selectedActionPayload = body.selectedAction || null;
+    let selectedActionPayload = (typeof body.selectedAction !== 'undefined') ? body.selectedAction : null;
     if (typeof selectedActionPayload === 'string') {
       const actionId = selectedActionPayload;
       selectedActionPayload = (found && Array.isArray(found.proposedActions)) ? found.proposedActions.find((a) => a && a.id === actionId) : null;
@@ -428,14 +594,16 @@ app.post('/taskboard/api/task/decision', async (req, res) => {
     } else if (selectedActionPayload && typeof selectedActionPayload === 'object' && selectedActionPayload.id) {
       // If client provided a partial object with an id, try to reconcile with saved task
       // Merge client-provided fields (e.g., payload.routing) with the stored action so routing is preserved
-      const existingAction = (found && Array.isArray(found.proposedActions)) ? found.proposedActions.find((a) => a && a.id === selectedActionPayload.id) : null;
-      if (existingAction) {
-        // shallow merge: existingAction fields, then client-provided fields override
-        const merged = Object.assign({}, existingAction, selectedActionPayload);
-        // merge payloads specifically
-        merged.payload = Object.assign({}, existingAction.payload || {}, selectedActionPayload.payload || {});
-        selectedActionPayload = merged;
+      const actionId = selectedActionPayload.id;
+      const existingAction = (found && Array.isArray(found.proposedActions)) ? found.proposedActions.find((a) => a && a.id === actionId) : null;
+      if (!existingAction) {
+        return res.status(400).json({ error: `selectedAction id '${actionId}' not found in task ${taskId}` });
       }
+      // shallow merge: existingAction fields, then client-provided fields override
+      const merged = Object.assign({}, existingAction, selectedActionPayload);
+      // merge payloads specifically
+      merged.payload = Object.assign({}, existingAction.payload || {}, selectedActionPayload.payload || {});
+      selectedActionPayload = merged;
     }
 
     const review_msg = {
@@ -533,6 +701,13 @@ app.get(['/taskboard', '/taskboard/'], (req, res) => {
   res.sendFile(path.join(distPath, 'index.html'));
 });
 app.get('/taskboard/*', (req, res, next) => {
+  // If the original URL looks like an api/results request but the
+  // normalized path no longer starts with /taskboard/api/, likely this
+  // was a path-traversal attempt such as /taskboard/api/results/../../etc/passwd
+  const orig = (req.originalUrl || req.url || '');
+  if (orig.indexOf('/taskboard/api/results') !== -1 && !req.path.startsWith('/taskboard/api/')) {
+    return res.status(400).json({ error: 'Invalid taskId' });
+  }
   // allow /taskboard/api/* to be handled by the api routes above
   if (req.path.startsWith('/taskboard/api/')) return next();
   res.sendFile(path.join(distPath, 'index.html'));

@@ -421,11 +421,13 @@ function TaskDetail({
 
     // If running in Standalone Mode, send explicit decisions to the standalone API
     if (standaloneMode && ['approved', 'denied', 'deferred'].includes(decision)) {
+      const selectedActionToSend = actionForSend || opts.newAction || null
       const payload = {
         taskId: local.taskId,
         decision,
         policy,
-        selectedAction: actionForSend,
+        // ensure standalone POST includes the full action object (prefer already-prepared action, otherwise the newAction)
+        selectedAction: selectedActionToSend,
         editedAction: opts.editedAction || null,
         newAction: opts.newAction || null,
         notes: local.notes || null,
