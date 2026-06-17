@@ -7,7 +7,7 @@ export interface ProposedAction {
   payload?: any
 }
 
-export type MessageAuthor = 'user' | 'system' | 'reviewer' | 'openhands' | 'runner'
+export type MessageAuthor = 'user' | 'system' | 'reviewer' | 'openhands' | 'runner' | 'second_opinion'
 
 export interface Message {
   id: string
@@ -32,6 +32,9 @@ export interface Task {
     selectedHostname?: string
     selectedRole?: string
   }
+  // follow-up linkage
+  parentTaskId?: string
+  followUpIds?: string[]
   // last update time
   updatedAt?: string
   // Chat/thread messages (optional)

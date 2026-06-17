@@ -111,10 +111,13 @@ pre { white-space: pre-wrap; font-family: inherit; background: #fff; padding: 8p
 @media (max-width: 600px) {
   .app { padding: 10px; }
   .app-header h1 { font-size:16px; }
+  .app-header { flex-wrap: wrap; }
+  .header-right { flex-wrap: wrap; gap: 6px; }
   .connection-status { margin-left:8px; font-size:12px; padding:4px 6px; }
   .board { flex-direction: column; }
   .columns { width:100%; flex-direction:column; }
   .column { min-width:0; max-height:none; }
+  .sidebar { width: 100%; min-width: 0; max-width: none; }
   .card { padding:10px 12px; }
   .card-title { font-size:15px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .card-sub { display:block; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
@@ -214,9 +217,22 @@ pre { white-space: pre-wrap; font-family: inherit; background: #fff; padding: 8p
 .message-meta { font-size: 12px; color: #6b7280; }
 .message-text { font-size: 15px; color: #111827; }
 .message-data { font-size: 13px; color: #111827; overflow: auto; }
+
+/* Runner result details inside message bubbles */
+.runner-details { font-size: 13px; color: #374151; margin-top: 6px; }
+.runner-details div { margin-top: 4px; }
+.runner-details strong { color: #111827; margin-right: 6px; }
+details summary { cursor: pointer; font-weight: 600; }
+
 .composer textarea { border: 1px solid #e5e7eb; border-radius: 8px; resize: vertical; }
 .composer .small { border-radius: 8px; padding: 10px 12px; font-weight: 700; }
 .thread-item { padding: 12px; border-bottom: 1px solid #f1f5f9; cursor:pointer; }
+
+/* Second opinion (ChatGPT) message style */
+.message-bubble.second_opinion { background: #fff8f5; border: 1px solid #ffd6c7; }
+.message-bubble.second_opinion .message-meta { color: #92400e; }
+.message-bubble.second_opinion .message-text { color: #7c2d12; }
+
 .thread-item.selected { background: #f8fafc; }
 .thread-title { font-weight:600; }
 .thread-sub { font-size: 13px; color: #6b7280; margin-top: 6px; }

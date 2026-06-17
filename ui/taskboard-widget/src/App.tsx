@@ -24,6 +24,18 @@ function generateTaskId(preferPwa = true) {
   return `TASK-${now.getTime()}`;
 }
 
+function generateFollowUpId() {
+  const now = new Date();
+  const pad = (n, l = 2) => String(n).padStart(l, '0');
+  const y = now.getFullYear();
+  const m = pad(now.getMonth() + 1);
+  const d = pad(now.getDate());
+  const hh = pad(now.getHours());
+  const mm = pad(now.getMinutes());
+  const ss = pad(now.getSeconds());
+  return `PWA-FOLLOWUP-${y}${m}${d}-${hh}${mm}${ss}`;
+}
+
 // Static agent options (used when live registry is not available)
 const STATIC_AGENTS: Agent[] = [
   {
@@ -160,8 +172,10 @@ function TaskDetail({
   standaloneMode,
   standaloneToken,
   chatMode,
+  openTask,
 }: {
   task: Task
+  openTask?: (taskId: string) => void
   onSave: (t: Task) => Promise<any>
   sendMatrixEvent: (content: any) => Promise<{ ok: boolean; error?: string }>
   widgetInfo: { widgetId: string | null; parentUrl: string | null; roomId: string | null; connected: boolean; capabilitiesGranted: boolean }
@@ -205,11 +219,148 @@ function TaskDetail({
   }, [messages])
 
   async function handleGetSecondOpinion() {
+    // Open the modal to request or paste a 2nd opinion
+    // Default title empty (user should type a title). Avoid prefilled prefixes.
+    setOpinionTitle('')
+    setOpinionBody('')
+    setShowSecondOpinionModal(true)
+  }
+
+  async function handleOpenFollowUpModal() {
+    // Prepare default values for follow-up modal
+    const defaultId = generateFollowUpId()
+    setFollowUpTaskId(defaultId)
+    setFollowUpTitle('')
+    setFollowUpDesc('')
+    const defaultAgent = (local && local.routing && local.routing.selectedAgentId) ? local.routing.selectedAgentId : (AGENTS[0] && AGENTS[0].id)
+    setFollowUpAgent(defaultAgent)
+    const agentObj = AGENTS.find(a => a.id === defaultAgent) || AGENTS[0]
+    setFollowUpRole((local && local.routing && local.routing.selectedRole) || agentObj.roles[0] || '')
+    setShowFollowUpModal(true)
+  }
+
+  async function handleSaveFollowUpDraft() {
+    const title = (followUpTitle || '').trim()
+    const desc = (followUpDesc || '').trim()
+    if (!title || !desc) {
+      setToast({ type: 'warning', message: 'Enter title and description for follow-up' })
+      setTimeout(() => setToast({ type: null, message: null }), 2000)
+      return
+    }
+
+    let newId = (followUpTaskId || '').trim()
+    if (!newId) newId = generateFollowUpId()
+
+    const agentObj = AGENTS.find(a => a.id === followUpAgent) || AGENTS[0]
+    const routing = { selectedAgentId: followUpAgent || agentObj.id, selectedHostname: agentObj.hostname, selectedRole: followUpRole || agentObj.roles[0] }
+    const act: ProposedAction = { id: uuid('act-'), type: 'manual', description: desc, payload: { parentTaskId: local.taskId, routing } }
+
+    const newTask: any = {
+      taskId: newId,
+      title,
+      status: 'pending_review',
+      openhandsResponse: '',
+      reviewerSummary: '',
+      proposedActions: [act],
+      selectedAction: act.id,
+      notes: desc,
+      routing,
+      parentTaskId: local.taskId,
+      followUpIds: [],
+      updatedAt: new Date().toISOString(),
+      messages: [{ id: uuid('msg-'), author: 'system', text: 'Follow-up task created', createdAt: new Date().toISOString() }]
+    }
+
     try {
-      await copyFor2ndOpinion()
+      await onSave(newTask)
+      setShowFollowUpModal(false)
+      setToast({ type: 'success', message: `Follow-up saved: ${newId}` })
+      setTimeout(() => setToast({ type: null, message: null }), 2000)
+
+      const systemMsg = { id: uuid('msg-'), author: 'system', text: `Follow-up task created: ${newId}`, createdAt: new Date().toISOString(), data: { followUpTask: newTask } }
+      const updatedLocal = { ...local, messages: [...(local.messages || []), systemMsg], followUpIds: [...(local.followUpIds || []), newId] }
+      setLocal(updatedLocal)
+      try { await onSave(updatedLocal) } catch (e) {}
     } catch (e) {
-      setToast({ type: 'error', message: 'Failed to copy for 2nd Opinion' })
-      setTimeout(() => setToast({ type: null, message: null }), 2500)
+      setToast({ type: 'error', message: 'Failed to save follow-up draft' })
+      setTimeout(() => setToast({ type: null, message: null }), 3000)
+    }
+  }
+
+  async function handleSubmitFollowUp() {
+    // Save draft first (will persist task and update parent)
+    await handleSaveFollowUpDraft()
+    // Determine child ID
+    const childId = (local.followUpIds && local.followUpIds.length) ? local.followUpIds[local.followUpIds.length - 1] : (followUpTaskId || '').trim()
+    if (!childId) {
+      setToast({ type: 'error', message: 'No follow-up task found to submit' })
+      setTimeout(() => setToast({ type: null, message: null }), 2000)
+      return
+    }
+
+    // Fetch saved task to get its selectedAction
+    let childTask: any = null
+    try {
+      const res = await fetch(`${import.meta.env.BASE_URL}api/tasks`)
+      if (res.ok) {
+        const list = await res.json()
+        if (Array.isArray(list)) childTask = list.find((t) => t.taskId === childId)
+      }
+    } catch (e) {}
+
+    if (!childTask) {
+      setToast({ type: 'error', message: 'Could not find saved follow-up task' })
+      setTimeout(() => setToast({ type: null, message: null }), 2000)
+      return
+    }
+
+    const selectedAction = (Array.isArray(childTask.proposedActions) ? childTask.proposedActions.find((a: any) => a.id === childTask.selectedAction) : null) || (childTask.proposedActions && childTask.proposedActions[0]) || null
+    if (!selectedAction) {
+      setToast({ type: 'error', message: 'Follow-up has no selected action to submit' })
+      setTimeout(() => setToast({ type: null, message: null }), 2000)
+      return
+    }
+
+    selectedAction.payload = selectedAction.payload || {}
+    selectedAction.payload.parentTaskId = childTask.parentTaskId || local.taskId
+    selectedAction.payload.routing = selectedAction.payload.routing || childTask.routing || local.routing || {}
+
+    const payload = {
+      taskId: childId,
+      decision: 'approved',
+      source: 'taskboard-standalone',
+      selectedAction,
+      createdAt: new Date().toISOString(),
+    }
+
+    const token = standaloneToken || (typeof window !== 'undefined' ? window.localStorage.getItem('taskboard_standalone_token') : null)
+    if (!token) {
+      setToast({ type: 'error', message: 'Standalone API token required to submit follow-up' })
+      setTimeout(() => setToast({ type: null, message: null }), 3000)
+      return
+    }
+
+    try {
+      const res = await fetch(`${import.meta.env.BASE_URL}api/task/decision`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify(payload)
+      })
+      if (!res.ok) {
+        const txt = await res.text()
+        setToast({ type: 'error', message: `Submit failed: ${res.status}` })
+        console.error('Submit follow-up failed', res.status, txt)
+        setTimeout(() => setToast({ type: null, message: null }), 3000)
+        return
+      }
+      const j = await res.json()
+      setToast({ type: 'success', message: 'Follow-up submitted to reviewer' })
+      setTimeout(() => setToast({ type: null, message: null }), 3000)
+      const systemMsg = { id: uuid('msg-'), author: 'system', text: `Follow-up task created: ${childId}`, createdAt: new Date().toISOString(), data: { followUpTaskId: childId } }
+      const updatedLocal = { ...local, messages: [...(local.messages || []), systemMsg], followUpIds: [...(local.followUpIds || []), childId] }
+      setLocal(updatedLocal)
+      try { await onSave(updatedLocal) } catch (e) {}
+    } catch (e) {
+      setToast({ type: 'error', message: 'Failed to submit follow-up' })
+      setTimeout(() => setToast({ type: null, message: null }), 3000)
     }
   }
 
@@ -299,33 +450,96 @@ function TaskDetail({
   }
 
   // Poll for OpenHands results when in chatMode
+  const [runnerResult, setRunnerResult] = useState<any | null>(null)
+  const [resultLoading, setResultLoading] = useState<boolean>(false)
+  const [resultFound, setResultFound] = useState<boolean | null>(null)
+  const fetchRunnerRef = useRef<() => Promise<any> | null>(null)
+
   useEffect(() => {
     let cancelled = false
-    async function poll() {
+    let iv: any = null
+    const terminalStatuses = ['completed', 'executed', 'failed', 'dry_run_completed']
+
+    async function fetchOnce() {
       if (!chatMode) return
       if (!local || !local.taskId) return
+
+      setResultLoading(true)
+      // show checking message while loading
+      setMessages((prev) => {
+        const idx = prev.findIndex((m: any) => m.data && m.data._runner_marker && m.data._runner_for === local.taskId)
+        const loadingMsg = { id: uuid('msg-'), author: 'openhands', text: 'Checking runner result...', createdAt: new Date().toISOString(), data: { _runner_marker: true, _runner_for: local.taskId, loading: true } }
+        if (idx === -1) return [...prev, loadingMsg]
+        const copy = [...prev]
+        copy[idx] = loadingMsg
+        return copy
+      })
+
       try {
         const res = await fetch(`${import.meta.env.BASE_URL}api/results/${encodeURIComponent(local.taskId)}`)
-        if (!res.ok) return
+        if (!res.ok) { setResultLoading(false); return null }
         const r = await res.json()
-        if (r && r.status && r.status !== 'waiting') {
-          const resultMsg = { id: uuid('msg-'), author: 'openhands', text: r.summary || JSON.stringify(r), createdAt: r.createdAt || new Date().toISOString(), data: r }
-          setMessages((prev) => {
-            const exists = prev.find((m: any) => m.data && m.data.resultId && r.resultId && m.data.resultId === r.resultId)
-            if (exists) return prev
-            return [...prev, resultMsg]
-          })
-          // persist result into task for visibility
-          const updated = { ...local, openhandsResponse: r.summary || local.openhandsResponse, messages: [...(local.messages || []), resultMsg] }
-          setLocal(updated)
-          try { await onSave(updated) } catch (e) {}
+        if (cancelled) return r
+        setResultLoading(false)
+        setRunnerResult(r)
+        setResultFound(Boolean(r && r.found))
+
+        const resultMsg = {
+          id: uuid('msg-'),
+          author: 'openhands',
+          text: r && r.found === false ? 'Waiting for OpenHands result...' : (r && r.summary) || (r && r.status) || 'Runner result',
+          createdAt: (r && (r.updatedAt || r.createdAt)) ? (r.updatedAt || r.createdAt) : new Date().toISOString(),
+          data: Object.assign({ _runner_marker: true, _runner_for: local.taskId }, r),
         }
-      } catch (e) {}
+
+        setMessages((prev) => {
+          const idx = prev.findIndex((m: any) => m.data && m.data._runner_marker && m.data._runner_for === local.taskId)
+          if (idx === -1) return [...prev, resultMsg]
+          const next = [...prev]
+          next[idx] = resultMsg
+          return next
+        })
+
+        // persist result into task (replace any previous runner message)
+        const filtered = (local.messages || []).filter((m: any) => !(m.data && m.data._runner_marker && m.data._runner_for === local.taskId))
+        const updated = { ...local, openhandsResponse: r && r.summary ? r.summary : local.openhandsResponse, messages: [...filtered, resultMsg] }
+        setLocal(updated)
+        try { await onSave(updated) } catch (e) {}
+
+        const status = r && r.status ? String(r.status) : null
+        if (status && terminalStatuses.includes(status)) {
+          if (iv) clearInterval(iv)
+        }
+
+        return r
+      } catch (e) {
+        setResultLoading(false)
+        return null
+      }
     }
+
+    // expose fetch for manual Refresh button
+    fetchRunnerRef.current = fetchOnce
+
     if (chatMode && local && local.taskId) {
-      poll()
-      const iv = setInterval(poll, 5000)
-      return () => { cancelled = true; clearInterval(iv) }
+      // initial fetch and then poll every 10s (start polling only if status not terminal)
+      fetchOnce().then((r) => {
+        const status = r && r.status ? String(r.status) : null
+        if (!status || !terminalStatuses.includes(status)) {
+          iv = setInterval(fetchOnce, 10000)
+        }
+      }).catch(() => {})
+      return () => { cancelled = true; if (iv) clearInterval(iv) }
+    }
+    return () => { fetchRunnerRef.current = null }
+  }, [local.taskId, chatMode])
+
+
+
+  // Fetch opinions when thread overlay opens
+  useEffect(() => {
+    if (chatMode && local && local.taskId) {
+      fetchOpinionsForTask().catch(() => {})
     }
   }, [local.taskId, chatMode])
 
@@ -345,6 +559,21 @@ function TaskDetail({
   const [showEdit, setShowEdit] = useState(false)
   const [showPaste, setShowPaste] = useState(false)
   const [showCopyModal, setShowCopyModal] = useState(false)
+
+  // second opinion modal state
+  const [showSecondOpinionModal, setShowSecondOpinionModal] = useState(false)
+  const [opinionTitle, setOpinionTitle] = useState<string>('')
+  const [opinionBody, setOpinionBody] = useState<string>('')
+  const [opinionsLoading, setOpinionsLoading] = useState<boolean>(false)
+
+  // follow-up modal state
+  const [showFollowUpModal, setShowFollowUpModal] = useState(false)
+  const [followUpTaskId, setFollowUpTaskId] = useState<string>('')
+  const [followUpTitle, setFollowUpTitle] = useState<string>('')
+  const [followUpDesc, setFollowUpDesc] = useState<string>('')
+  const [followUpAgent, setFollowUpAgent] = useState<string>('')
+  const [followUpRole, setFollowUpRole] = useState<string>('')
+
 
   // form fields
   const [newType, setNewType] = useState<string>('manual')
@@ -564,6 +793,7 @@ function TaskDetail({
         await (navigator as any).clipboard.writeText(prompt)
         setToast({ type: 'success', message: 'Copied for 2nd Opinion' })
         setTimeout(() => setToast({ type: null, message: null }), 2500)
+
       } else {
         // fallback to modal showing text to copy
         setPasteText(prompt)
@@ -616,6 +846,91 @@ function TaskDetail({
       setShowCopyModal(true)
     }
   }
+
+
+  // Fetch stored 2nd opinions for the current task and attach to messages
+  async function fetchOpinionsForTask() {
+    if (!chatMode) return
+    if (!local || !local.taskId) return
+    try {
+      setOpinionsLoading(true)
+      const res = await fetch(`${import.meta.env.BASE_URL}api/opinions/${encodeURIComponent(local.taskId)}`)
+      if (!res.ok) { setOpinionsLoading(false); return }
+      const arr = await res.json()
+      if (!Array.isArray(arr)) { setOpinionsLoading(false); return }
+
+      // Deduplicate opinions from server before mapping
+      const unique: any[] = []
+      const seen = new Set<string>()
+      for (const op of arr) {
+        const title = (op && op.title) ? String(op.title) : ''
+        const body = (op && (op.body || op.content)) ? String(op.body || op.content) : ''
+        const createdAt = (op && op.createdAt) ? String(op.createdAt) : ''
+        const key = op && op.id ? `id:${op.id}` : `kb:${title}\u0001${body}\u0001${createdAt}`
+        if (!seen.has(key)) {
+          seen.add(key)
+          unique.push(op)
+        }
+      }
+
+      const mapped = unique.map((op: any) => ({ id: op && op.id ? `op-${op.id}` : uuid('op-'), author: 'second_opinion' as any, text: op && op.title ? op.title : (op && (op.body || '').slice(0, 200)) || '', createdAt: (op && op.createdAt) || new Date().toISOString(), data: { opinion: op } }))
+
+      // Replace existing second_opinion messages with the fresh set (avoid duplicate uuids)
+      setMessages((prev) => {
+        const filteredPrev = (prev || []).filter((m: any) => m.author !== 'second_opinion')
+        return [...filteredPrev, ...mapped]
+      })
+
+      // persist into local task messages (replace previous second_opinion messages)
+      try {
+        const filtered = (local.messages || []).filter((m: any) => !(m.author === 'second_opinion'))
+        const updated = { ...local, messages: [...filtered, ...mapped] }
+        setLocal(updated)
+        await onSave(updated)
+      } catch (e) {}
+      setOpinionsLoading(false)
+    } catch (e) {
+      setOpinionsLoading(false)
+    }
+  }
+
+  // Submit a new 2nd Opinion (saves to server storage). Server may optionally call ChatGPT.
+  async function handleSubmitOpinion() {
+    const title = (opinionTitle || '').trim()
+    const body = (opinionBody || '').trim()
+    if (!title || !body) {
+      setToast({ type: 'warning', message: 'Enter title and content for 2nd Opinion' })
+      setTimeout(() => setToast({ type: null, message: null }), 2000)
+      return
+    }
+    if (!local || !local.taskId) {
+      setToast({ type: 'error', message: 'Missing taskId' })
+      setTimeout(() => setToast({ type: null, message: null }), 2000)
+      return
+    }
+    try {
+      const res = await fetch(`${import.meta.env.BASE_URL}api/opinions/${encodeURIComponent(local.taskId)}`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title, body })
+      })
+      if (!res.ok) {
+        setToast({ type: 'error', message: 'Failed to save 2nd Opinion' })
+        setTimeout(() => setToast({ type: null, message: null }), 2500)
+        return
+      }
+      const saved = await res.json()
+      setShowSecondOpinionModal(false)
+      setOpinionBody('')
+      setOpinionTitle('')
+      setToast({ type: 'success', message: '2nd Opinion saved' })
+      setTimeout(() => setToast({ type: null, message: null }), 2000)
+      // refresh opinions and attach to thread
+      await fetchOpinionsForTask()
+    } catch (e) {
+      setToast({ type: 'error', message: 'Failed to save 2nd Opinion' })
+      setTimeout(() => setToast({ type: null, message: null }), 2500)
+    }
+  }
+
 
   // Create new action from form
   function handleCreateSave() {
@@ -719,21 +1034,131 @@ function TaskDetail({
             >
               {(AGENTS.find(a => a.id === ((local.routing && local.routing.selectedAgentId) || AGENTS[0].id)) || AGENTS[0]).roles.map((r) => <option key={r} value={r}>{r}</option>)}
             </select>
+
+          {showSecondOpinionModal ? (
+            <div className="modal-overlay" onClick={() => setShowSecondOpinionModal(false)}>
+              <div className="modal" onClick={(e) => e.stopPropagation()}>
+                <h3>Get 2nd Opinion</h3>
+                <div className="form-row">
+                  <label>Title</label>
+                  <input value={opinionTitle} onChange={(e) => setOpinionTitle((e.target as HTMLInputElement).value)} />
+                </div>
+                <div className="form-row">
+                  <label>Content</label>
+                  <textarea value={opinionBody} onChange={(e) => setOpinionBody((e.target as HTMLTextAreaElement).value)} style={{ minHeight: 160 }} />
+                </div>
+                <div className="form-actions">
+                  <button onClick={() => setShowSecondOpinionModal(false)}>Cancel</button>
+                  <button onClick={handleSubmitOpinion}>Save Opinion</button>
+                </div>
+              </div>
+            </div>
+          ) : null}
+
+          {showFollowUpModal ? (
+            <div className="modal-overlay" onClick={() => setShowFollowUpModal(false)}>
+              <div className="modal" onClick={(e) => e.stopPropagation()}>
+                <h3>New Follow-up Task</h3>
+                <div className="form-row">
+                  <label>Task ID (optional)</label>
+                  <input value={followUpTaskId} onChange={(e) => setFollowUpTaskId((e.target as HTMLInputElement).value)} />
+                </div>
+                <div className="form-row">
+                  <label>Title</label>
+                  <input value={followUpTitle} onChange={(e) => setFollowUpTitle((e.target as HTMLInputElement).value)} />
+                </div>
+                <div className="form-row">
+                  <label>Description</label>
+                  <textarea value={followUpDesc} onChange={(e) => setFollowUpDesc((e.target as HTMLTextAreaElement).value)} style={{ minHeight: 120 }} />
+                </div>
+                <div className="form-row">
+                  <label>Agent</label>
+                  <select value={followUpAgent} onChange={(e) => setFollowUpAgent((e.target as HTMLSelectElement).value)}>
+                    {AGENTS.map((a) => <option key={a.id} value={a.id}>{formatAgentDisplay(a)}</option>)}
+                  </select>
+                </div>
+                <div className="form-row">
+                  <label>Role</label>
+                  <select value={followUpRole} onChange={(e) => setFollowUpRole((e.target as HTMLSelectElement).value)}>
+                    {(AGENTS.find(a => a.id === followUpAgent) || AGENTS[0]).roles.map((r) => <option key={r} value={r}>{r}</option>)}
+                  </select>
+                </div>
+                <div className="form-actions">
+                  <button onClick={() => setShowFollowUpModal(false)}>Cancel</button>
+                  <button onClick={handleSaveFollowUpDraft}>Save Draft</button>
+                  <button onClick={handleSubmitFollowUp}>Submit Follow-up</button>
+                </div>
+              </div>
+            </div>
+          ) : null}
+
           </div>
 
-          <div style={{ marginLeft: 8 }}>
+          <div style={{ marginLeft: 8, display: 'flex', alignItems: 'center' }}>
             <span className={`status-pill status-${local.status || 'pending'}`}>{local.status || 'pending'}</span>
+            <button className="small" onClick={() => { if (fetchRunnerRef.current) fetchRunnerRef.current(); }} style={{ marginLeft: 8 }}>Refresh</button>
           </div>
         </div>
 
         <div className="messages" ref={messagesRef} style={{ overflowY: 'auto', maxHeight: '60vh', padding: 12 }}>
-          {messages.map((m) => (
-            <div key={m.id} className={`message-bubble ${m.author}`} style={{ marginBottom: 12 }}>
-              <div className="message-meta" style={{ fontSize: 12, color: '#666' }}>{m.author} · {m.createdAt ? new Date(m.createdAt).toLocaleString() : ''}</div>
-              <div className="message-text" style={{ marginTop: 6 }}>{m.text}</div>
-              {m.data ? <pre className="message-data" style={{ background: '#f7fafc', padding: 8, marginTop: 8, borderRadius: 6 }}>{JSON.stringify(m.data, null, 2)}</pre> : null}
-            </div>
-          ))}
+          {messages.map((m) => {
+            const isRunner = m.data && m.data._runner_marker
+            const isOpinion = m.author === 'second_opinion' || (m.data && m.data.opinion)
+            return (
+              <div key={m.id} className={`message-bubble ${m.author}`} style={{ marginBottom: 12 }}>
+                <div className="message-meta" style={{ fontSize: 12, color: '#666' }}>{isOpinion ? 'ChatGPT' : (m.author === 'openhands' ? 'OpenHands' : m.author)} · {m.createdAt ? new Date(m.createdAt).toLocaleString() : ''}</div>
+                {isOpinion ? (
+                  <>
+                    <div className="message-text" style={{ marginTop: 6 }}>
+                      {m.data && m.data.opinion && (m.data.opinion.title || m.data.opinion.body) ? (
+                        <>
+                          {m.data.opinion.title ? <div style={{ fontWeight: 600 }}>{m.data.opinion.title}</div> : null}
+                          {m.data.opinion.body ? <div style={{ marginTop: 6 }}>{m.data.opinion.body}</div> : null}
+                        </>
+                      ) : (m.text || '')}
+                    </div>
+                    <details style={{ marginTop: 8 }}>
+                      <summary>Developer info</summary>
+                      <pre className="message-data" style={{ background: '#f7fafc', padding: 8, marginTop: 8, borderRadius: 6 }}>{JSON.stringify(m.data, null, 2)}</pre>
+                    </details>
+                  </>
+                ) : isRunner ? (
+                  <>
+                    <div className="message-text" style={{ marginTop: 6 }}>{m.data && m.data.loading ? 'Checking runner result...' : (m.data && m.data.found === false ? 'Waiting for OpenHands result...' : (m.data && m.data.summary ? m.data.summary : m.text))}</div>
+                    <div className="runner-details" style={{ marginTop: 8 }}>
+                      {m.data && m.data.status ? <div><strong>status:</strong> {m.data.status}</div> : null}
+                      {m.data && m.data.runDirectory ? <div><strong>runDirectory:</strong> {m.data.runDirectory}</div> : null}
+                      {m.data && (m.data.updatedAt || m.data.createdAt) ? <div><strong>updatedAt:</strong> {m.data.updatedAt || m.data.createdAt}</div> : null}
+                      {m.data && m.data.resultId ? <div><strong>resultId:</strong> {m.data.resultId}</div> : null}
+                      {m.data && (typeof m.data.returnCode !== 'undefined') ? <div><strong>returnCode:</strong> {String(m.data.returnCode)}</div> : null}
+                    </div>
+                    <details style={{ marginTop: 8 }}>
+                      <summary>Developer info</summary>
+                      <pre className="message-data" style={{ background: '#f7fafc', padding: 8, marginTop: 8, borderRadius: 6 }}>{JSON.stringify(m.data, null, 2)}</pre>
+                    </details>
+                  </>
+                ) : (
+                  <>
+                    <div className="message-text" style={{ marginTop: 6 }}>
+                        {m.data && m.data.followUpTask ? (
+                          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                            <div style={{ flex: 1 }}>{m.text}</div>
+                            <div style={{ marginLeft: 8 }}>
+                              <button className="small" onClick={() => { try { if (openTask && m && m.data && m.data.followUpTask) openTask(m.data.followUpTask.taskId) } catch (e) {} }}>
+                                Open follow-up
+                              </button>
+                            </div>
+                          </div>
+                        ) : (
+                          m.text
+                        )}
+                      </div>
+                    {m.data ? <pre className="message-data" style={{ background: '#f7fafc', padding: 8, marginTop: 8, borderRadius: 6 }}>{JSON.stringify(m.data, null, 2)}</pre> : null}
+                  </>
+                )}
+              </div>
+            )
+          })}
         </div>
 
         <div className="composer" style={{ position: 'sticky', bottom: 0, background: '#fff', padding: 8, borderTop: '1px solid #eee' }}>
@@ -768,6 +1193,7 @@ function TaskDetail({
           </div>
           <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
             <button className="small" onClick={handleGetSecondOpinion} style={{ flex: 1 }}>Get 2nd Opinion</button>
+            <button className="small" onClick={handleOpenFollowUpModal} style={{ flex: 1 }}>New Follow-up Task</button>
             <button className="small" onClick={handleSaveDraft} style={{ flex: 1 }}>Save Draft</button>
             <button className="small" onClick={handleSubmitTask} style={{ flex: 1, background: '#10b981', color: '#fff', border: 'none' }}>Submit Task</button>
           </div>
@@ -1677,6 +2103,7 @@ export default function App() {
                   standaloneMode={isStandalone}
                   standaloneToken={standaloneToken}
                   chatMode={true}
+                  openTask={(id: string) => setSelected(id)}
                 />
               ) : (
                 <div style={{ padding: 16 }}>Start a new task or select a thread</div>
@@ -1752,6 +2179,8 @@ export default function App() {
                   showDev={devOpen}
                   standaloneMode={isStandalone}
                   standaloneToken={standaloneToken}
+                  openTask={(id: string) => setSelected(id)}
+
                   chatMode={isChatView && isMobileApp}
                 />
               ) : (

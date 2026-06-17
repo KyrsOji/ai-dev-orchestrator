@@ -288,23 +288,40 @@ function writeResults(obj) {
   try { fs.writeFileSync(RESULTS_FILE, JSON.stringify(obj, null, 2)); } catch (e) { console.error('writeResults error', e); }
 }
 
+// Opinions store (simple file-based persistence)
+const OPINIONS_FILE = '/tmp/taskboard-opinions.json';
+function readOpinions() {
+  try {
+    if (!fs.existsSync(OPINIONS_FILE)) return {};
+    const c = fs.readFileSync(OPINIONS_FILE, 'utf8');
+    return JSON.parse(c || '{}');
+  } catch (e) {
+    console.error('readOpinions error', e);
+    return {};
+  }
+}
+function writeOpinions(obj) {
+  try { fs.writeFileSync(OPINIONS_FILE, JSON.stringify(obj, null, 2)); } catch (e) { console.error('writeOpinions error', e); }
+}
+
 // Build a results response for a task by inspecting runner run directory
 function buildResultForTask(id) {
   const SAFE_RE = /^[A-Za-z0-9_.-]+$/;
   if (!id || !SAFE_RE.test(id)) {
     return { error: 'invalid_taskId', statusCode: 400 };
   }
-  const RUN_BASE = process.env.RUN_BASE || '/var/lib/ai-dev-runner/openhands-runs';
-  const baseResolved = path.resolve(RUN_BASE);
-  const runDir = path.resolve(RUN_BASE, id);
+  // Use RUNNER_BASE_DIR per new requirement
+  const RUNNER_BASE_DIR = process.env.RUNNER_BASE_DIR || '/var/lib/ai-dev-runner/openhands-runs';
+  const baseResolved = path.resolve(RUNNER_BASE_DIR);
+  const runDir = path.resolve(RUNNER_BASE_DIR, id);
+  // Ensure resolved path is under the base directory
   if (!runDir.startsWith(baseResolved + path.sep) && runDir !== baseResolved) {
     return { error: 'invalid_taskId', statusCode: 400 };
   }
 
   try {
+    // If run directory does not exist, report not found (do not fallback to /tmp/taskboard-results.json)
     if (!fs.existsSync(runDir) || !fs.statSync(runDir).isDirectory()) {
-      const all = readResults();
-      if (all && all[id]) return all[id];
       return { taskId: id, found: false, status: 'pending', summary: 'Waiting for runner result.', updatedAt: null };
     }
 
@@ -326,16 +343,34 @@ function buildResultForTask(id) {
       try { taskMarkdown = fs.readFileSync(taskMdPath, 'utf8'); } catch (e) { taskMarkdown = null; }
     }
 
+    // Determine status per spec:
+    // - executionReport.status if available
+    // - else 'prepared' if task.json exists
+    // - else 'received' if runDir exists
     let status = 'pending';
-    if (executionReport && executionReport.status) status = executionReport.status;
-    else if (taskObj) status = 'prepared';
-    else status = 'pending';
+    if (executionReport && executionReport.status) {
+      status = executionReport.status;
+    } else if (taskObj) {
+      status = 'prepared';
+    } else {
+      status = 'received';
+    }
 
+    // Determine summary per spec:
+    // - executionReport.summary if available
+    // - else "Runner completed with status: <status>" if executionReport.status exists
+    // - else "Runner prepared task artifacts." if task.json exists
+    // - else "Runner received task." if runDir exists
     let summary = 'Waiting for runner result.';
-    if (executionReport && executionReport.summary) summary = executionReport.summary;
-    else if (executionReport && executionReport.status) summary = `Runner completed with status: ${executionReport.status}`;
-    else if (taskObj) summary = 'Runner prepared task artifacts.';
-    else summary = 'Waiting for runner result.';
+    if (executionReport && executionReport.summary) {
+      summary = executionReport.summary;
+    } else if (executionReport && executionReport.status) {
+      summary = `Runner completed with status: ${executionReport.status}`;
+    } else if (taskObj) {
+      summary = 'Runner prepared task artifacts.';
+    } else {
+      summary = 'Runner received task.';
+    }
 
     // compute updatedAt using latest mtime among available files
     let updatedAt = null;
@@ -366,8 +401,6 @@ function buildResultForTask(id) {
     };
   } catch (e) {
     console.error('results lookup error', e && e.message ? e.message : e);
-    const all = readResults();
-    if (all && all[id]) return all[id];
     return { taskId: id, found: false, status: 'pending', summary: 'Waiting for runner result.', updatedAt: null };
   }
 }
@@ -376,6 +409,7 @@ function buildResultForTask(id) {
 app.get('/api/results/:taskId', (req, res) => {
   const id = req.params.taskId;
   const out = buildResultForTask(id);
+
   if (out && out.error === 'invalid_taskId' && out.statusCode === 400) {
     return res.status(400).json({ error: 'Invalid taskId' });
   }
@@ -469,6 +503,7 @@ app.get('/api/agents', (req, res) => {
         freshnessSeconds: Math.floor(60 * 60),
         isFresh: false,
       },
+
     ]
     return res.json({ agents: fallback, warning: `Failed to read registry at ${registryPath}: ${String(e && e.message ? e.message : e)}` })
   }
@@ -544,6 +579,52 @@ app.get('/taskboard/api/agents', (req, res) => {
     return res.json({ agents: fallback, warning: `Failed to read registry at ${registryPath}: ${String(e && e.message ? e.message : e)}` })
   }
 })
+
+
+// Opinions endpoints: store and retrieve ChatGPT "2nd Opinion" entries per task
+// GET  /api/opinions/:taskId
+// POST /api/opinions/:taskId
+function registerOpinionsEndpoints(basePath) {
+  app.get(`${basePath}/opinions/:taskId`, (req, res) => {
+    const id = req.params.taskId;
+    const SAFE_RE = /^[A-Za-z0-9_.-]+$/;
+    if (!id || id.indexOf('/') !== -1 || !SAFE_RE.test(id)) return res.status(400).json({ error: 'Invalid taskId' });
+    try {
+      const all = readOpinions();
+      const arr = Array.isArray(all[id]) ? all[id] : [];
+      return res.json(arr);
+    } catch (e) {
+      console.error(`GET ${basePath}/opinions error`, e && e.message ? e.message : e);
+      return res.status(500).json([]);
+    }
+  });
+
+  app.post(`${basePath}/opinions/:taskId`, (req, res) => {
+    const id = req.params.taskId;
+    const SAFE_RE = /^[A-Za-z0-9_.-]+$/;
+    if (!id || id.indexOf('/') !== -1 || !SAFE_RE.test(id)) return res.status(400).json({ error: 'Invalid taskId' });
+    try {
+      const body = req.body || {};
+      const title = (body.title || '').toString();
+      const content = (body.body || body.content || '').toString();
+      if (!title || !content) return res.status(400).json({ error: 'Missing title or body' });
+      const opinions = readOpinions();
+      const list = Array.isArray(opinions[id]) ? opinions[id] : [];
+      const op = { id: genId('OP-'), createdAt: new Date().toISOString(), source: 'chatgpt', title: title, body: content };
+      list.push(op);
+      opinions[id] = list;
+      writeOpinions(opinions);
+      return res.json(op);
+    } catch (e) {
+      console.error(`POST ${basePath}/opinions error`, e && e.message ? e.message : e);
+      return res.status(500).json({ error: 'internal' });
+    }
+  });
+}
+
+registerOpinionsEndpoints('/api');
+registerOpinionsEndpoints('/taskboard/api');
+
 
 
 // Standalone decision API for mobile / direct browser usage
@@ -706,6 +787,11 @@ app.get('/taskboard/*', (req, res, next) => {
   // was a path-traversal attempt such as /taskboard/api/results/../../etc/passwd
   const orig = (req.originalUrl || req.url || '');
   if (orig.indexOf('/taskboard/api/results') !== -1 && !req.path.startsWith('/taskboard/api/')) {
+    return res.status(400).json({ error: 'Invalid taskId' });
+  }
+  // additional heuristic: if path normalized to system directories like /taskboard/etc/*,
+  // likely a traversal attempt such as /taskboard/api/results/../../etc/passwd -- reject
+  if (req.path.startsWith('/taskboard/etc/') || req.path.startsWith('/taskboard/var/') || req.path.startsWith('/taskboard/usr/')) {
     return res.status(400).json({ error: 'Invalid taskId' });
   }
   // allow /taskboard/api/* to be handled by the api routes above
