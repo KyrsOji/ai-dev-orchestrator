@@ -8,6 +8,22 @@ function uuid(prefix = '') {
   return prefix + Date.now().toString(36) + Math.random().toString(36).slice(2, 8)
 }
 
+
+function generateTaskId(preferPwa = true) {
+  const now = new Date();
+  const pad = (n, l = 2) => String(n).padStart(l, '0');
+  if (preferPwa) {
+    const y = now.getFullYear();
+    const m = pad(now.getMonth() + 1);
+    const d = pad(now.getDate());
+    const hh = pad(now.getHours());
+    const mm = pad(now.getMinutes());
+    const ss = pad(now.getSeconds());
+    return `PWA-${y}${m}${d}-${hh}${mm}${ss}`;
+  }
+  return `TASK-${now.getTime()}`;
+}
+
 function safeStringify(obj: any) {
   try {
     const seen = new WeakSet()
@@ -58,17 +74,171 @@ function TaskDetail({
   sendMatrixEvent,
   widgetInfo,
   showDev,
+  standaloneMode,
+  standaloneToken,
+  chatMode,
 }: {
   task: Task
   onSave: (t: Task) => Promise<any>
   sendMatrixEvent: (content: any) => Promise<{ ok: boolean; error?: string }>
   widgetInfo: { widgetId: string | null; parentUrl: string | null; roomId: string | null; connected: boolean; capabilitiesGranted: boolean }
   showDev?: boolean
+  // frontend standalone props
+  standaloneMode?: boolean
+  standaloneToken?: string | null
+  chatMode?: boolean
 }) {
   const [local, setLocal] = useState<Task>(task)
   const [toast, setToast] = useState<{ type: 'success' | 'warning' | 'error' | null; message: string | null }>({ type: null, message: null })
   const [isMobile, setIsMobile] = useState<boolean>(typeof window !== 'undefined' ? window.innerWidth <= 600 : false)
   useEffect(() => setLocal(task), [task])
+
+  // Chat/thread state for chat-mode
+  const [messages, setMessages] = useState<any[]>(() => {
+    try {
+      if (task && Array.isArray((task as any).messages) && (task as any).messages.length) return (task as any).messages
+    } catch (e) {}
+    const init: any[] = []
+    init.push({ id: uuid('msg-'), author: 'system', text: 'Task created', createdAt: new Date().toISOString() })
+    if (task && (task as any).notes) init.push({ id: uuid('msg-'), author: 'user', text: (task as any).notes, createdAt: new Date().toISOString() })
+    if (task && task.reviewerSummary) init.push({ id: uuid('msg-'), author: 'reviewer', text: task.reviewerSummary, createdAt: new Date().toISOString() })
+    if (task && task.openhandsResponse) init.push({ id: uuid('msg-'), author: 'openhands', text: task.openhandsResponse, createdAt: new Date().toISOString() })
+    return init
+  })
+
+  useEffect(() => {
+    // sync when underlying task messages change
+    try {
+      if (local && Array.isArray((local as any).messages) && (local as any).messages.length) setMessages((local as any).messages)
+    } catch (e) {}
+  }, [local.messages])
+
+  const [composerText, setComposerText] = useState<string>('')
+  const messagesRef = useRef<HTMLDivElement | null>(null)
+  useEffect(() => {
+    try {
+      if (messagesRef.current) messagesRef.current.scrollTop = messagesRef.current.scrollHeight
+    } catch (e) {}
+  }, [messages])
+
+  async function handleGetSecondOpinion() {
+    try {
+      await copyFor2ndOpinion()
+    } catch (e) {
+      setToast({ type: 'error', message: 'Failed to copy for 2nd Opinion' })
+      setTimeout(() => setToast({ type: null, message: null }), 2500)
+    }
+  }
+
+  async function handleSaveDraft() {
+    const text = (composerText || '').trim()
+    if (!text) {
+      setToast({ type: 'warning', message: 'Enter a description first' })
+      setTimeout(() => setToast({ type: null, message: null }), 2000)
+      return
+    }
+
+    const newMsg = { id: uuid('msg-'), author: 'user', text, createdAt: new Date().toISOString() }
+    const nextLocal: any = { ...local, messages: [...(local.messages || []), newMsg], notes: text }
+    setLocal(nextLocal)
+    setMessages((prev) => [...prev, newMsg])
+    try {
+      await onSave(nextLocal)
+      setToast({ type: 'success', message: 'Draft saved' })
+    } catch (e) {
+      setToast({ type: 'error', message: 'Failed to save draft' })
+    }
+    setTimeout(() => setToast({ type: null, message: null }), 2000)
+    setComposerText('')
+  }
+
+  async function handleSubmitTask() {
+    let nextLocal: any = { ...local }
+    // ensure stable taskId
+    if (!nextLocal.taskId || !nextLocal.taskId.trim()) {
+      nextLocal.taskId = generateTaskId(true)
+    }
+
+    // ensure selectedAction exists; create default if missing
+    let actionCreated: any = null
+    if (!nextLocal.proposedActions || nextLocal.proposedActions.length === 0) {
+      const act = { id: uuid('act-'), type: 'manual', description: nextLocal.title || (composerText || 'Run task'), payload: {} }
+      nextLocal.proposedActions = [act]
+      nextLocal.selectedAction = act.id
+      actionCreated = act
+    } else if (!nextLocal.selectedAction) {
+      nextLocal.selectedAction = nextLocal.proposedActions[0].id
+    }
+
+    // attach user message if composer has text
+    if (composerText && composerText.trim()) {
+      const userMsg = { id: uuid('msg-'), author: 'user', text: composerText.trim(), createdAt: new Date().toISOString() }
+      nextLocal.messages = [...(nextLocal.messages || []), userMsg]
+      nextLocal.notes = composerText.trim()
+      setMessages((prev) => [...prev, userMsg])
+    }
+
+    // Save task locally
+    try {
+      await onSave(nextLocal)
+      setLocal(nextLocal)
+    } catch (e) {
+      // continue
+    }
+
+    // Submit decision via standalone API (approved) - includes selectedAction object
+    try {
+      const ok = await sendActionEvent('approved', { newAction: actionCreated })
+      if (ok) {
+        const submittedMsg = { id: uuid('msg-'), author: 'system', text: 'Submitted to reviewer.', createdAt: new Date().toISOString() }
+        setMessages((prev) => [...prev, submittedMsg])
+        nextLocal.messages = [...(nextLocal.messages || []), submittedMsg]
+        nextLocal.status = 'pending_review'
+        setLocal(nextLocal)
+        try { await onSave(nextLocal) } catch (e) {}
+      } else {
+        setToast({ type: 'error', message: 'Submission failed' })
+        setTimeout(() => setToast({ type: null, message: null }), 4000)
+      }
+    } catch (e) {
+      setToast({ type: 'error', message: 'Submission failed' })
+      setTimeout(() => setToast({ type: null, message: null }), 4000)
+    }
+
+    setComposerText('')
+  }
+
+  // Poll for OpenHands results when in chatMode
+  useEffect(() => {
+    let cancelled = false
+    async function poll() {
+      if (!chatMode) return
+      if (!local || !local.taskId) return
+      try {
+        const res = await fetch(`${import.meta.env.BASE_URL}api/results/${encodeURIComponent(local.taskId)}`)
+        if (!res.ok) return
+        const r = await res.json()
+        if (r && r.status && r.status !== 'waiting') {
+          const resultMsg = { id: uuid('msg-'), author: 'openhands', text: r.summary || JSON.stringify(r), createdAt: r.createdAt || new Date().toISOString(), data: r }
+          setMessages((prev) => {
+            const exists = prev.find((m: any) => m.data && m.data.resultId && r.resultId && m.data.resultId === r.resultId)
+            if (exists) return prev
+            return [...prev, resultMsg]
+          })
+          // persist result into task for visibility
+          const updated = { ...local, openhandsResponse: r.summary || local.openhandsResponse, messages: [...(local.messages || []), resultMsg] }
+          setLocal(updated)
+          try { await onSave(updated) } catch (e) {}
+        }
+      } catch (e) {}
+    }
+    if (chatMode && local && local.taskId) {
+      poll()
+      const iv = setInterval(poll, 5000)
+      return () => { cancelled = true; clearInterval(iv) }
+    }
+  }, [local.taskId, chatMode])
+
 
   useEffect(() => {
     function onResize() {
@@ -153,6 +323,70 @@ function TaskDetail({
     const selectedActionObj = local.proposedActions.find((a) => a.id === local.selectedAction) || null
     const policy = (selectedActionObj && selectedActionObj.type) || (local.proposedActions[0] && local.proposedActions[0].type) || 'manual'
 
+    // If running in Standalone Mode, send explicit decisions to the standalone API
+    if (standaloneMode && ['approved', 'denied', 'deferred'].includes(decision)) {
+      const payload = {
+        taskId: local.taskId,
+        decision,
+        policy,
+        selectedAction: selectedActionObj,
+        editedAction: opts.editedAction || null,
+        newAction: opts.newAction || null,
+        notes: local.notes || null,
+        source: 'taskboard-standalone',
+        createdAt: new Date().toISOString(),
+      }
+
+      const token = standaloneToken || (typeof window !== 'undefined' ? window.localStorage.getItem('taskboard_standalone_token') : null)
+      if (!token) {
+        setToast({ type: 'error', message: 'Standalone API token required' })
+        setTimeout(() => setToast({ type: null, message: null }), 4000)
+        return false
+      }
+
+      setToast({ type: 'warning', message: 'Sending via standalone API...' })
+      try {
+        const res = await fetch(`${import.meta.env.BASE_URL}api/task/decision`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify(payload),
+        })
+        if (!res.ok) {
+          const txt = await res.text()
+          setToast({ type: 'error', message: `Standalone API failed: ${res.status} ${res.statusText}` })
+          setTimeout(() => setToast({ type: null, message: null }), 6000)
+          console.error('Standalone API failure', res.status, txt)
+          return false
+        }
+        setToast({ type: 'success', message: 'Sent via standalone API' })
+        setTimeout(() => setToast({ type: null, message: null }), 3000)
+
+        // Update local status for explicit decisions
+        let newStatus = local.status
+        if (decision === 'approved') newStatus = 'approved'
+        else if (decision === 'denied') newStatus = 'denied'
+        else if (decision === 'deferred') newStatus = 'deferred'
+
+        const updated: Task = {
+          ...local,
+          status: newStatus,
+        }
+
+        await onSave(updated)
+        setLocal(updated)
+        return true
+      } catch (e) {
+        console.error('Standalone API send error', e)
+        setToast({ type: 'error', message: 'Standalone API send error' })
+        setTimeout(() => setToast({ type: null, message: null }), 6000)
+        return false
+      }
+    }
+
+    // Fallback: original Matrix send behavior (unchanged)
     const content = {
       taskId: local.taskId,
       decision,
@@ -352,10 +586,64 @@ function TaskDetail({
     }
   }
 
-  return (
+  if (chatMode) {
+    return (
+      <div className="task-detail chat-mode">
+        <div className="chat-header" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <input
+            type="text"
+            value={local.title || ''}
+            onChange={(e) => update({ title: (e.target as HTMLInputElement).value })}
+            placeholder="Task title"
+            style={{ flex: 1, fontSize: 18, padding: 8 }}
+          />
+          <div style={{ marginLeft: 8 }}>
+            <span className={`status-pill status-${local.status || 'pending'}`}>{local.status || 'pending'}</span>
+          </div>
+        </div>
+
+        <div className="messages" ref={messagesRef} style={{ overflowY: 'auto', maxHeight: '60vh', padding: 12 }}>
+          {messages.map((m) => (
+            <div key={m.id} className={`message-bubble ${m.author}`} style={{ marginBottom: 12 }}>
+              <div className="message-meta" style={{ fontSize: 12, color: '#666' }}>{m.author} · {m.createdAt ? new Date(m.createdAt).toLocaleString() : ''}</div>
+              <div className="message-text" style={{ marginTop: 6 }}>{m.text}</div>
+              {m.data ? <pre className="message-data" style={{ background: '#f7fafc', padding: 8, marginTop: 8, borderRadius: 6 }}>{JSON.stringify(m.data, null, 2)}</pre> : null}
+            </div>
+          ))}
+        </div>
+
+        <div className="composer" style={{ position: 'sticky', bottom: 0, background: '#fff', padding: 8, borderTop: '1px solid #eee' }}>
+          <textarea
+            value={composerText}
+            onChange={(e) => setComposerText((e.target as HTMLTextAreaElement).value)}
+            placeholder="Describe the task..."
+            style={{ width: '100%', height: 96, padding: 8, fontSize: 15 }}
+          />
+          <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+            <button className="small" onClick={handleGetSecondOpinion} style={{ flex: 1 }}>Get 2nd Opinion</button>
+            <button className="small" onClick={handleSaveDraft} style={{ flex: 1 }}>Save Draft</button>
+            <button className="small" onClick={handleSubmitTask} style={{ flex: 1, background: '#10b981', color: '#fff', border: 'none' }}>Submit Task</button>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+    return (
+
     <div className="task-detail">
       <h2>{local.title}</h2>
-      <div className="muted">{local.taskId}</div>
+      <div style={{ marginBottom: 8 }}>
+        <label style={{ display: 'block', fontSize: 12 }}>Task ID</label>
+        <input
+          type="text"
+          value={local.taskId || ''}
+          onChange={(e) => update({ taskId: (e.target as HTMLInputElement).value })}
+          placeholder="e.g. PWA-DBWRITE-SMOKE-001"
+          style={{ width: '100%', padding: 6 }}
+        />
+        {!local.taskId ? <div style={{ color: '#b45309', marginTop: 6 }}>Task ID is required to approve actions.</div> : null}
+      </div>
 
       {/* connection/info */}
       <div style={{ marginBottom: 8 }}>
@@ -587,7 +875,7 @@ function TaskDetail({
       {!isMobile ? (
         <div className="buttons">
           <button onClick={handleSave}>Save</button>
-          <button onClick={() => doDecision('approved')} disabled={!local.selectedAction}>
+          <button onClick={() => doDecision('approved')} disabled={!local.selectedAction || !local.taskId || !local.taskId.trim()}>
             Approve Selected Action
           </button>
           <button onClick={() => doDecision('denied')}>Deny</button>
@@ -596,7 +884,7 @@ function TaskDetail({
       ) : (
         <div className="mobile-action-bar">
           <button onClick={handleSave}>Save</button>
-          <button onClick={() => doDecision('approved')} disabled={!local.selectedAction}>Approve</button>
+          <button onClick={() => doDecision('approved')} disabled={!local.selectedAction || !local.taskId || !local.taskId.trim()}>Approve</button>
           <button onClick={() => doDecision('denied')}>Deny</button>
           <button onClick={() => doDecision('deferred')}>Defer</button>
         </div>
@@ -610,6 +898,52 @@ export default function App() {
   const [selected, setSelected] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
 
+
+  // Chat-mode toggle (query param ?v=chat-ui) and mobile-aware layout
+  const [isChatView, setIsChatView] = useState<boolean>(typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('v') === 'chat-ui' : false)
+  const [isMobileApp, setIsMobileApp] = useState<boolean>(typeof window !== 'undefined' ? window.innerWidth <= 600 : false)
+  useEffect(() => {
+    function onResizeApp() { setIsMobileApp(window.innerWidth <= 600) }
+    try { onResizeApp(); window.addEventListener('resize', onResizeApp) } catch (e) {}
+    return () => { try { window.removeEventListener('resize', onResizeApp) } catch (e) {} }
+  }, [])
+
+  // Runner status (display as status pill)
+  const [runnerStatus, setRunnerStatus] = useState<string>('unknown')
+  useEffect(() => {
+    let mounted = true
+    async function fetchRunner() {
+      try {
+        const res = await fetch(`${import.meta.env.BASE_URL}api/runner-status`)
+        if (!res.ok) return
+        const j = await res.json()
+        if (mounted && j && j.status) setRunnerStatus(j.status)
+      } catch (e) {}
+    }
+    fetchRunner()
+    const iv = setInterval(fetchRunner, 10000)
+    return () => { mounted = false; clearInterval(iv) }
+  }, [])
+
+  function createNewTask(initialTitle = ''): Task {
+    const id = generateTaskId(true)
+    const newTask: Task & { messages?: any[] } = {
+      taskId: id,
+      title: initialTitle || '',
+      status: 'pending_review',
+      openhandsResponse: '',
+      reviewerSummary: '',
+      proposedActions: [],
+      selectedAction: null,
+      notes: '',
+      messages: [{ id: uuid('msg-'), author: 'system', text: 'New task created', createdAt: new Date().toISOString() }],
+    }
+    setTasks((prev) => [newTask as Task, ...prev])
+    setSelected(newTask.taskId)
+    return newTask as Task
+  }
+
+
   const widgetRef = useRef<any>(null)
   const [widgetInfo, setWidgetInfo] = useState<{ widgetId: string | null; parentUrl: string | null; roomId: string | null; connected: boolean; capabilitiesGranted: boolean }>({
     widgetId: null,
@@ -619,6 +953,20 @@ export default function App() {
     capabilitiesGranted: false,
   })
   const [devOpen, setDevOpen] = useState(false)
+
+  // Standalone API token (stored in localStorage)
+  const [standaloneToken, setStandaloneToken] = useState<string | null>(null)
+  const [tokenInput, setTokenInput] = useState<string>('')
+
+  const [rawParams, setRawParams] = useState<{ rawWidgetId: string | null; rawParentUrl: string | null; rawRoomId: string | null }>({
+    rawWidgetId: null,
+    rawParentUrl: null,
+    rawRoomId: null,
+  })
+
+  const [transportWidgetId, setTransportWidgetId] = useState<string | null>(null)
+
+  const [gotWidgetConfig, setGotWidgetConfig] = useState(false)
 
   // diagnostics pushed by sendMatrixEvent attempts
   const [diags, setDiags] = useState<string[]>([])
@@ -658,6 +1006,13 @@ export default function App() {
       let widgetId = pick(['widgetId', 'widget_id', 'widgetid', 'matrix_widget_id'])
       let parentUrl = pick(['parentUrl', 'parent_url', 'parenturl'])
       let roomId = pick(['roomId', 'room_id', 'roomid'])
+
+      // capture raw values (before placeholder cleanup) for Developer Info
+      const rawWidgetId = widgetId
+      const rawParentUrl = parentUrl
+      const rawRoomId = roomId
+      try { setRawParams({ rawWidgetId, rawParentUrl, rawRoomId }) } catch (e) {}
+
 
       const isPlaceholder = (v: string | null) => typeof v === 'string' && (v.startsWith('$') || /\$\{.+\}/.test(v))
 
@@ -775,6 +1130,7 @@ export default function App() {
           apiInstance.on('action:widget_config', (ev: any) => {
             try {
               const data = ev && ev.detail && ev.detail.data ? ev.detail.data : ev && ev.data ? ev.data : null
+              try { setGotWidgetConfig(true) } catch (e) {}
               const maybeRoom = data && (data.room_id || data.roomId || data.room)
               if (maybeRoom && !isPlaceholder(maybeRoom)) {
                 setWidgetInfo((prev) => ({ ...prev, roomId: maybeRoom }))
@@ -791,6 +1147,11 @@ export default function App() {
           else if (widgetId) actualWidgetId = widgetId
         } catch (e) {}
 
+
+				// capture transport.widgetId for Developer Info if available
+				try { setTransportWidgetId(apiInstance && apiInstance.transport && apiInstance.transport.widgetId ? apiInstance.transport.widgetId : null) } catch (e) {}
+
+
         let capGranted = false
         try {
           if (typeof apiInstance.hasCapability === 'function') {
@@ -806,6 +1167,18 @@ export default function App() {
       console.error('initWidgetApi failed', e)
     }
   }
+
+  // Load standalone token from localStorage (once)
+  useEffect(() => {
+    try {
+      const t = (typeof window !== 'undefined' && window.localStorage) ? window.localStorage.getItem('taskboard_standalone_token') : null
+      if (t) {
+        setStandaloneToken(t)
+        setTokenInput(t)
+      }
+    } catch (e) {}
+  }, [])
+
 
   useEffect(() => {
     initWidgetApi()
@@ -969,15 +1342,27 @@ export default function App() {
 
   const current = tasks.find((t) => t.taskId === selected) || null
 
+  const isStandalone = !(widgetInfo.connected && widgetInfo.capabilitiesGranted && (transportWidgetId || widgetInfo.widgetId));
+
+
   return (
     <div className="app">
       <header className="app-header">
-        <div className="header-left">
+        <div className="header-left" style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           <h1>Taskboard</h1>
+          <button className="small" onClick={() => createNewTask()} style={{ marginLeft: 8, background: '#3b82f6', color:'#fff', border: 'none' }}>
+            New Task
+          </button>
         </div>
         <div className="header-right">
           <span className={`connection-status ${widgetInfo.connected ? 'online' : 'offline'}`}>
             {widgetInfo.connected ? 'Connected' : 'Local'}{widgetInfo.capabilitiesGranted ? ' · Capabilities granted' : ''}
+          </span>
+          <span className={`connection-status ${runnerStatus === 'dry-run' ? 'offline' : 'online'}`} style={{ marginLeft: 8 }}>
+            Runner: {runnerStatus === 'dry-run' ? 'dry-run' : 'connected'}
+          </span>
+          <span className={`mode-badge ${isStandalone ? 'mode-standalone' : 'mode-matrix'}`} style={{ marginLeft: 8 }}>
+            {isStandalone ? 'Standalone Mode' : 'Matrix Mode'}
           </span>
           <div className="task-summary" style={{ display: 'inline-block', marginLeft: 12 }}>
             <span className="summary-item">Pending: {pending.length}</span>{' '}
@@ -992,83 +1377,151 @@ export default function App() {
       {devOpen ? (
         <div className="developer-info panel" style={{ marginBottom: 12 }}>
           <h4>Developer Info</h4>
-          <div><strong>Widget Info</strong></div>
+
+          <div><strong>Location</strong></div>
+          <div>href: {typeof window !== 'undefined' ? window.location.href : '(no window)'}</div>
+          <div>search: {typeof window !== 'undefined' ? window.location.search : '(no window)'}</div>
+          <div>hash: {typeof window !== 'undefined' ? window.location.hash : '(no window)'}</div>
+
+          <div style={{ marginTop: 8 }}><strong>Raw query params (before placeholder cleanup)</strong></div>
+          <div>rawWidgetId: {rawParams.rawWidgetId ?? '(none)'}</div>
+          <div>rawParentUrl: {rawParams.rawParentUrl ?? '(none)'}</div>
+          <div>rawRoomId: {rawParams.rawRoomId ?? '(none)'}</div>
+
+          <div style={{ marginTop: 8 }}><strong>Parsed values after cleanup</strong></div>
+          <div>widgetId: {widgetInfo.widgetId ?? '(none)'}</div>
+          <div>parentUrl: {widgetInfo.parentUrl ?? '(none)'}</div>
+          <div>roomId: {widgetInfo.roomId ?? '(none)'}</div>
+
+
+          <div style={{ marginTop: 8 }}><strong>Standalone API</strong></div>
+          <div style={{ marginTop: 6 }}>
+            <div className="form-row">
+              <label>Standalone API token (stored in localStorage)</label>
+              <input type="password" value={tokenInput} onChange={(e) => setTokenInput((e.target as HTMLInputElement).value)} style={{ width: '100%', padding: 6 }} />
+            </div>
+            <div style={{ marginTop: 8 }}>
+              <button onClick={() => { try { window.localStorage.setItem('taskboard_standalone_token', tokenInput); setStandaloneToken(tokenInput); } catch (e) {} }}>Save token</button>
+              <button onClick={() => { try { window.localStorage.removeItem('taskboard_standalone_token'); setStandaloneToken(null); setTokenInput(''); } catch (e) {} }} style={{ marginLeft: 8 }}>Clear token</button>
+            </div>
+            {isStandalone && !standaloneToken ? (<div style={{ marginTop: 8, color: '#b45309' }}>Standalone API token required</div>) : null}
+          </div>
+
+          <div style={{ marginTop: 8 }}><strong>Transport</strong></div>
+          <div>transport.widgetId: {transportWidgetId ?? '(none)'}</div>
+          <div>widget_config received: {gotWidgetConfig ? 'yes' : 'no'}</div>
+
+          <div style={{ marginTop: 8 }}><strong>Widget Info (raw)</strong></div>
           <pre style={{ whiteSpace: 'pre-wrap' }}>{safeStringify(widgetInfo)}</pre>
           <div><strong>Diagnostics (recent)</strong></div>
           <pre style={{ whiteSpace: 'pre-wrap' }}>{diags.slice(-40).join('\n')}</pre>
         </div>
       ) : null}
       <div className="board">
-        <div className="columns">
-          <Column title="Pending Review">
-            {pending.map((t) => (
-              <div
-                className={'card' + (selected === t.taskId ? ' selected' : '')}
-                key={t.taskId}
-                onClick={() => setSelected(t.taskId)}
-              >
-                <div className="card-title">{t.title}</div>
-                <div className="card-sub">
-                  <span className="card-status">{t.status}</span>
-                  <span className="card-reviewer">{(t.reviewerSummary || '').split('\n')[0]}</span>
-                  <span className="card-action">{(t.proposedActions.find(a => a.id === t.selectedAction)?.description) || (t.proposedActions[0]?.description) || ''}</span>
+        {isChatView && isMobileApp ? (
+          <div className="chat-home">
+            <div className="threads-list">
+              {tasks.map((t) => (
+                <div key={t.taskId} className={'thread-item' + (selected === t.taskId ? ' selected' : '')} onClick={() => setSelected(t.taskId)}>
+                  <div className="thread-title">{t.title || t.taskId}</div>
+                  <div className="thread-sub"><span className="thread-status">{t.status}</span> <span className="thread-reviewer">{(t.reviewerSummary || '').split('\n')[0]}</span></div>
                 </div>
-              </div>
-            ))}
-          </Column>
+              ))}
+            </div>
+            <div className="detail-pane">
+              {current ? (
+                <TaskDetail
+                  task={current}
+                  onSave={async (t) => { const d = await saveTask(t); await load(); return d }}
+                  sendMatrixEvent={sendMatrixEvent}
+                  widgetInfo={widgetInfo}
+                  showDev={devOpen}
+                  standaloneMode={isStandalone}
+                  standaloneToken={standaloneToken}
+                  chatMode={true}
+                />
+              ) : (
+                <div style={{ padding: 16 }}>Start a new task or select a thread</div>
+              )}
+            </div>
+          </div>
+        ) : (
+          <>
+            <div className="columns">
+              <Column title="Pending Review">
+                {pending.map((t) => (
+                  <div
+                    className={'card' + (selected === t.taskId ? ' selected' : '')}
+                    key={t.taskId}
+                    onClick={() => setSelected(t.taskId)}
+                  >
+                    <div className="card-title">{t.title}</div>
+                    <div className="card-sub">
+                      <span className="card-status">{t.status}</span>
+                      <span className="card-reviewer">{(t.reviewerSummary || '').split('\n')[0]}</span>
+                      <span className="card-action">{(t.proposedActions.find(a => a.id === t.selectedAction)?.description) || (t.proposedActions[0]?.description) || ''}</span>
+                    </div>
+                  </div>
+                ))}
+              </Column>
 
-          <Column title="Approved">
-            {approved.map((t) => (
-              <div
-                className={'card' + (selected === t.taskId ? ' selected' : '')}
-                key={t.taskId}
-                onClick={() => setSelected(t.taskId)}
-              >
-                <div className="card-title">{t.title}</div>
-                <div className="card-sub">
-                  <span className="card-status">{t.status}</span>
-                  <span className="card-reviewer">{(t.reviewerSummary || '').split('\n')[0]}</span>
-                  <span className="card-action">{(t.proposedActions.find(a => a.id === t.selectedAction)?.description) || (t.proposedActions[0]?.description) || ''}</span>
-                </div>
-              </div>
-            ))}
-          </Column>
+              <Column title="Approved">
+                {approved.map((t) => (
+                  <div
+                    className={'card' + (selected === t.taskId ? ' selected' : '')}
+                    key={t.taskId}
+                    onClick={() => setSelected(t.taskId)}
+                  >
+                    <div className="card-title">{t.title}</div>
+                    <div className="card-sub">
+                      <span className="card-status">{t.status}</span>
+                      <span className="card-reviewer">{(t.reviewerSummary || '').split('\n')[0]}</span>
+                      <span className="card-action">{(t.proposedActions.find(a => a.id === t.selectedAction)?.description) || (t.proposedActions[0]?.description) || ''}</span>
+                    </div>
+                  </div>
+                ))}
+              </Column>
 
-          <Column title="Completed">
-            {completed.map((t) => (
-              <div
-                className={'card' + (selected === t.taskId ? ' selected' : '')}
-                key={t.taskId}
-                onClick={() => setSelected(t.taskId)}
-              >
-                <div className="card-title">{t.title}</div>
-                <div className="card-sub">
-                  <span className="card-status">{t.status}</span>
-                  <span className="card-reviewer">{(t.reviewerSummary || '').split('\n')[0]}</span>
-                  <span className="card-action">{(t.proposedActions.find(a => a.id === t.selectedAction)?.description) || (t.proposedActions[0]?.description) || ''}</span>
-                </div>
-              </div>
-            ))}
-          </Column>
-        </div>
+              <Column title="Completed">
+                {completed.map((t) => (
+                  <div
+                    className={'card' + (selected === t.taskId ? ' selected' : '')}
+                    key={t.taskId}
+                    onClick={() => setSelected(t.taskId)}
+                  >
+                    <div className="card-title">{t.title}</div>
+                    <div className="card-sub">
+                      <span className="card-status">{t.status}</span>
+                      <span className="card-reviewer">{(t.reviewerSummary || '').split('\n')[0]}</span>
+                      <span className="card-action">{(t.proposedActions.find(a => a.id === t.selectedAction)?.description) || (t.proposedActions[0]?.description) || ''}</span>
+                    </div>
+                  </div>
+                ))}
+              </Column>
+            </div>
 
-        <div className="detail-pane">
-          {current ? (
-            <TaskDetail
-              task={current}
-              onSave={async (t) => {
-                const d = await saveTask(t)
-                await load()
-                return d
-              }}
-              sendMatrixEvent={sendMatrixEvent}
-              widgetInfo={widgetInfo}
-              showDev={devOpen}
-            />
-          ) : (
-            <div>Select a task to view details</div>
-          )}
-        </div>
+            <div className="detail-pane">
+              {current ? (
+                <TaskDetail
+                  task={current}
+                  onSave={async (t) => {
+                    const d = await saveTask(t)
+                    await load()
+                    return d
+                  }}
+                  sendMatrixEvent={sendMatrixEvent}
+                  widgetInfo={widgetInfo}
+                  showDev={devOpen}
+                  standaloneMode={isStandalone}
+                  standaloneToken={standaloneToken}
+                  chatMode={isChatView && isMobileApp}
+                />
+              ) : (
+                <div>Select a task to view details</div>
+              )}
+            </div>
+          </>
+        )}
       </div>
     </div>
   )

@@ -12,7 +12,20 @@ app.use(cors());
 app.use(bodyParser.json());
 
 function genId(prefix = 'TASK-') {
-  return prefix + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+  // Support PWA-YYYYMMDD-HHMMSS or TASK-<timestamp>
+  const now = new Date();
+  if (prefix === 'PWA-' || prefix === 'PWA') {
+    const pad = (n, l = 2) => String(n).padStart(l, '0');
+    const y = now.getFullYear();
+    const m = pad(now.getMonth() + 1);
+    const d = pad(now.getDate());
+    const hh = pad(now.getHours());
+    const mm = pad(now.getMinutes());
+    const ss = pad(now.getSeconds());
+    return `PWA-${y}${m}${d}-${hh}${mm}${ss}`;
+  }
+  // Default TASK- plus unix ms timestamp (stable and unique)
+  return `${prefix}${now.getTime()}`;
 }
 
 function readData() {
@@ -181,6 +194,48 @@ app.post('/taskboard/api/task/save', (req, res) => {
   writeData(data);
   res.json(data);
 });
+
+
+// Simple local results store (non-production) - map taskId -> result
+const RESULTS_FILE = '/tmp/taskboard-results.json';
+function readResults() {
+  try {
+    if (!fs.existsSync(RESULTS_FILE)) return {};
+    const c = fs.readFileSync(RESULTS_FILE, 'utf8');
+    return JSON.parse(c || '{}');
+  } catch (e) {
+    console.error('readResults error', e);
+    return {};
+  }
+}
+function writeResults(obj) {
+  try { fs.writeFileSync(RESULTS_FILE, JSON.stringify(obj, null, 2)); } catch (e) { console.error('writeResults error', e); }
+}
+
+// GET result for a specific taskId (local store or TODO)
+app.get('/api/results/:taskId', (req, res) => {
+  const id = req.params.taskId;
+  const all = readResults();
+  if (all && all[id]) return res.json(all[id]);
+  return res.json({ status: 'waiting', message: 'Waiting for OpenHands result... (TODO: integrate real result stream)' });
+});
+app.get('/taskboard/api/results/:taskId', (req, res) => {
+  const id = req.params.taskId;
+  const all = readResults();
+  if (all && all[id]) return res.json(all[id]);
+  return res.json({ status: 'waiting', message: 'Waiting for OpenHands result... (TODO: integrate real result stream)' });
+});
+
+// Runner status endpoint (useful for UI status pill)
+app.get('/api/runner-status', (req, res) => {
+  const dry = (process.env.RUNNER_DRY_RUN || '').toString().toLowerCase() === 'true';
+  res.json({ status: dry ? 'dry-run' : 'connected' });
+});
+app.get('/taskboard/api/runner-status', (req, res) => {
+  const dry = (process.env.RUNNER_DRY_RUN || '').toString().toLowerCase() === 'true';
+  res.json({ status: dry ? 'dry-run' : 'connected' });
+});
+
 
 // Standalone decision API for mobile / direct browser usage
 // POST /taskboard/api/task/decision
