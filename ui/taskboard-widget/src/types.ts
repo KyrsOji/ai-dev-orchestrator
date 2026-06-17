@@ -7,6 +7,16 @@ export interface ProposedAction {
   payload?: any
 }
 
+export type MessageAuthor = 'user' | 'system' | 'reviewer' | 'openhands' | 'runner'
+
+export interface Message {
+  id: string
+  author: MessageAuthor
+  text: string
+  createdAt?: string
+  data?: any
+}
+
 export interface Task {
   taskId: string
   title: string
@@ -16,4 +26,31 @@ export interface Task {
   proposedActions: ProposedAction[]
   selectedAction: string | null
   notes: string
+  // routing information for multi-agent readiness
+  routing?: {
+    selectedAgentId?: string
+    selectedHostname?: string
+    selectedRole?: string
+  }
+  // last update time
+  updatedAt?: string
+  // Chat/thread messages (optional)
+  messages?: Message[]
 }
+
+export interface Agent {
+  agentId: string
+  id?: string
+  hostname: string
+  roles: string[]
+  status?: string
+  cpuCount?: number
+  memoryGb?: number
+  diskFreeGb?: number
+  loadAverage?: number
+  lastSeen?: string
+  freshnessSeconds?: number
+  isFresh?: boolean
+  raw?: any
+}
+

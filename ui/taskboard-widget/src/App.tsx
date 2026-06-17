@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef } from 'react'
-import { Task, ProposedAction } from './types'
+import { Task, ProposedAction, Agent } from './types'
 import { WidgetApi } from 'matrix-widget-api'
 
 declare global { interface Window { matrixWidgetApi?: any; MatrixWidgetApi?: any } }
@@ -24,6 +24,63 @@ function generateTaskId(preferPwa = true) {
   return `TASK-${now.getTime()}`;
 }
 
+// Static agent options (used when live registry is not available)
+const STATIC_AGENTS: Agent[] = [
+  {
+    agentId: 'ofbiz-dev-01',
+    id: 'ofbiz-dev-01',
+    hostname: 'ubuntu-16gb-sin-1',
+    roles: ['ofbiz'],
+    status: 'idle',
+    cpuCount: 8,
+    memoryGb: 15.2425,
+    diskFreeGb: 272.77,
+    loadAverage: 3.36,
+    lastSeen: new Date().toISOString(),
+    freshnessSeconds: 0,
+    isFresh: true,
+  },
+  {
+    agentId: 'future-agent-placeholder',
+    id: 'future-agent-placeholder',
+    hostname: 'another-server',
+    roles: ['general'],
+    status: 'idle',
+    cpuCount: 2,
+    memoryGb: 4,
+    diskFreeGb: 50,
+    loadAverage: 0.1,
+    lastSeen: new Date(Date.now() - 1000 * 60 * 60).toISOString(),
+    freshnessSeconds: Math.floor((Date.now() - (Date.now() - 1000 * 60 * 60)) / 1000),
+    isFresh: false,
+  },
+]
+
+let AGENTS = STATIC_AGENTS
+
+function timeAgo(iso?: string | number | Date) {
+  if (!iso) return 'unknown'
+  const then = new Date(iso).getTime()
+  const sec = Math.floor((Date.now() - then) / 1000)
+  if (sec < 60) return `${sec} sec ago`
+  const m = Math.floor(sec / 60)
+  if (m < 60) return `${m} min ago`
+  const h = Math.floor(m / 60)
+  if (h < 24) return `${h} hour${h > 1 ? 's' : ''} ago`
+  return new Date(then).toLocaleString()
+}
+
+function formatAgentDisplay(a: any) {
+  if (!a) return '(none)'
+  const id = a.id || a.agentId || '(unknown)'
+  const host = a.hostname || a.host || ''
+  const status = a.status || 'unknown'
+  const isFresh = (typeof a.isFresh === 'boolean') ? a.isFresh : (typeof a.freshnessSeconds === 'number' ? (a.freshnessSeconds <= 300) : true)
+  const freshLabel = isFresh ? 'fresh' : 'stale'
+  return `${id} · ${host} · ${status} · ${freshLabel}`
+}
+
+
 function safeStringify(obj: any) {
   try {
     const seen = new WeakSet()
@@ -43,6 +100,32 @@ function safeStringify(obj: any) {
     }
   }
 }
+
+const TaskCard = ({ t, onClick }: { t: any; onClick?: () => void }) => {
+  const agentId = t?.routing?.selectedAgentId || AGENTS[0].id
+  const hostname = t?.routing?.selectedHostname || AGENTS[0].hostname
+  const role = t?.routing?.selectedRole || (t?.routing?.role) || (AGENTS.find(a => a.id === agentId)?.roles?.[0]) || 'general'
+  const last = (t && Array.isArray(t.messages) && t.messages.length) ? t.messages[t.messages.length - 1].createdAt : t && t.updatedAt
+  const summary = t.openhandsResponse ? (String(t.openhandsResponse).split('\n')[0]) : 'Result: (pending)'
+
+  const agentObj = AGENTS.find(a => (a.id === agentId) || (a.agentId === agentId)) || null
+  const isStale = agentObj ? !agentObj.isFresh : true
+
+  return (
+    <div className={'card'} onClick={onClick} style={{ padding: 10 }}>
+      <div className="card-title">{t.title || t.taskId}</div>
+      <div className="card-sub" style={{ marginTop: 6 }}>
+        <span className="card-status">{t.status}</span>
+        <span style={{ marginLeft: 8 }}>{agentId} · {hostname}</span>
+        {agentObj && isStale ? (<span style={{ marginLeft: 8, color: '#b45309', fontSize: 12 }}>⚠️ stale</span>) : null}
+        <span style={{ marginLeft: 8 }}>{role}</span>
+        <span style={{ marginLeft: 8 }}>{timeAgo(last)}</span>
+      </div>
+      <div className="muted" style={{ marginTop: 6 }}>{summary}</div>
+    </div>
+  )
+}
+
 
 const api = {
   async getTasks(): Promise<Task[]> {
@@ -162,7 +245,14 @@ function TaskDetail({
     // ensure selectedAction exists; create default if missing
     let actionCreated: any = null
     if (!nextLocal.proposedActions || nextLocal.proposedActions.length === 0) {
-      const act = { id: uuid('act-'), type: 'manual', description: nextLocal.title || (composerText || 'Run task'), payload: {} }
+      const act = {
+        id: uuid('act-'),
+        type: 'manual',
+        description: nextLocal.title || (composerText || 'Run task'),
+        payload: {
+          routing: nextLocal.routing || { selectedAgentId: AGENTS[0].id, selectedHostname: AGENTS[0].hostname, selectedRole: AGENTS[0].roles[0] }
+        }
+      }
       nextLocal.proposedActions = [act]
       nextLocal.selectedAction = act.id
       actionCreated = act
@@ -323,13 +413,19 @@ function TaskDetail({
     const selectedActionObj = local.proposedActions.find((a) => a.id === local.selectedAction) || null
     const policy = (selectedActionObj && selectedActionObj.type) || (local.proposedActions[0] && local.proposedActions[0].type) || 'manual'
 
+    // Prepare action object for sending; ensure routing information is present
+    const actionForSend = selectedActionObj ? { ...selectedActionObj, payload: Object.assign({}, selectedActionObj.payload || {}) } : null
+    if (actionForSend) {
+      actionForSend.payload.routing = actionForSend.payload.routing || local.routing || { selectedAgentId: AGENTS[0].id, selectedHostname: AGENTS[0].hostname, selectedRole: AGENTS[0].roles[0] }
+    }
+
     // If running in Standalone Mode, send explicit decisions to the standalone API
     if (standaloneMode && ['approved', 'denied', 'deferred'].includes(decision)) {
       const payload = {
         taskId: local.taskId,
         decision,
         policy,
-        selectedAction: selectedActionObj,
+        selectedAction: actionForSend,
         editedAction: opts.editedAction || null,
         newAction: opts.newAction || null,
         notes: local.notes || null,
@@ -391,7 +487,7 @@ function TaskDetail({
       taskId: local.taskId,
       decision,
       policy,
-      selectedAction: selectedActionObj,
+      selectedAction: actionForSend,
       editedAction: opts.editedAction || null,
       newAction: opts.newAction || null,
       notes: local.notes || null,
@@ -597,6 +693,32 @@ function TaskDetail({
             placeholder="Task title"
             style={{ flex: 1, fontSize: 18, padding: 8 }}
           />
+
+          <div style={{ display: 'flex', flexDirection: 'column', minWidth: 160 }}>
+            <label style={{ fontSize: 12 }}>Agent</label>
+            <select
+              value={(local.routing && local.routing.selectedAgentId) || AGENTS[0].id}
+              onChange={(e) => {
+                const sel = AGENTS.find(a => a.id === (e.target as HTMLSelectElement).value) || AGENTS[0]
+                update({ routing: { selectedAgentId: sel.id, selectedHostname: sel.hostname, selectedRole: sel.roles[0] } })
+              }}
+              style={{ padding: 6 }}
+            >
+              {AGENTS.map((a) => <option key={a.id} value={a.id}>{formatAgentDisplay(a)}</option>)}
+            </select>
+          </div>
+
+          <div style={{ display: 'flex', flexDirection: 'column' }}>
+            <label style={{ fontSize: 12 }}>Role</label>
+            <select
+              value={(local.routing && local.routing.selectedRole) || (AGENTS.find(a => a.id === ((local.routing && local.routing.selectedAgentId) || AGENTS[0].id))?.roles?.[0])}
+              onChange={(e) => { update({ routing: { ...(local.routing || {}), selectedRole: (e.target as HTMLSelectElement).value } }) }}
+              style={{ padding: 6 }}
+            >
+              {(AGENTS.find(a => a.id === ((local.routing && local.routing.selectedAgentId) || AGENTS[0].id)) || AGENTS[0]).roles.map((r) => <option key={r} value={r}>{r}</option>)}
+            </select>
+          </div>
+
           <div style={{ marginLeft: 8 }}>
             <span className={`status-pill status-${local.status || 'pending'}`}>{local.status || 'pending'}</span>
           </div>
@@ -619,6 +741,29 @@ function TaskDetail({
             placeholder="Describe the task..."
             style={{ width: '100%', height: 96, padding: 8, fontSize: 15 }}
           />
+
+          <div style={{ marginBottom: 8 }}>
+            <label style={{ display: 'block', fontSize: 12 }}>Agent</label>
+            <select
+              value={(local.routing && local.routing.selectedAgentId) || AGENTS[0].id}
+              onChange={(e) => {
+                const sel = AGENTS.find(a => a.id === (e.target as HTMLSelectElement).value) || AGENTS[0]
+                update({ routing: { selectedAgentId: sel.id, selectedHostname: sel.hostname, selectedRole: sel.roles[0] } })
+              }}
+              style={{ width: '100%', padding: 6 }}
+            >
+              {AGENTS.map((a) => <option key={a.id} value={a.id}>{formatAgentDisplay(a)}</option>)}
+            </select>
+          </div>
+
+          <div style={{ marginBottom: 8 }}>
+            <label style={{ display: 'block', fontSize: 12 }}>Role</label>
+            <select value={(local.routing && local.routing.selectedRole) || (AGENTS.find(a => a.id === ((local.routing && local.routing.selectedAgentId) || AGENTS[0].id))?.roles?.[0])}
+              onChange={(e) => { update({ routing: { ...(local.routing || {}), selectedRole: (e.target as HTMLSelectElement).value } }) }}
+              style={{ width: '100%', padding: 6 }}>
+              {(AGENTS.find(a => a.id === ((local.routing && local.routing.selectedAgentId) || AGENTS[0].id)) || AGENTS[0]).roles.map((r) => <option key={r} value={r}>{r}</option>)}
+            </select>
+          </div>
           <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
             <button className="small" onClick={handleGetSecondOpinion} style={{ flex: 1 }}>Get 2nd Opinion</button>
             <button className="small" onClick={handleSaveDraft} style={{ flex: 1 }}>Save Draft</button>
@@ -925,9 +1070,85 @@ export default function App() {
     return () => { mounted = false; clearInterval(iv) }
   }, [])
 
+  // Live agent registry: fetch on load and refresh periodically
+  const [agentsState, setAgentsState] = useState<Agent[]>(AGENTS)
+
+  useEffect(() => {
+    let mounted = true
+    async function fetchAgents() {
+      try {
+        const url = `${import.meta.env.BASE_URL}api/agents`
+        const res = await fetch(url)
+        if (!res.ok) return
+        const body = await res.json()
+        let list: any[] = []
+        if (Array.isArray(body)) list = body
+        else if (Array.isArray(body.agents)) list = body.agents
+        else list = []
+
+        const normalized: Agent[] = list.map((a: any) => {
+          const agentId = a.agentId || a.id || ''
+          const hostname = a.hostname || a.host || ''
+          const roles = Array.isArray(a.roles) ? a.roles : (a.roles ? [a.roles] : [])
+          const status = a.status || 'unknown'
+          const cpuCount = typeof a.cpuCount === 'number' ? a.cpuCount : (typeof a.cpu === 'number' ? a.cpu : 0)
+          const memoryGb = typeof a.memoryGb === 'number' ? a.memoryGb : (typeof a.memory_gb === 'number' ? a.memory_gb : null)
+          const diskFreeGb = typeof a.diskFreeGb === 'number' ? a.diskFreeGb : (typeof a.disk_free_gb === 'number' ? a.disk_free_gb : null)
+          const loadAverage = typeof a.loadAverage === 'number' ? a.loadAverage : (typeof a.load_avg === 'number' ? a.load_avg : null)
+          const lastSeen = a.lastSeen || a.last_seen || null
+          let freshnessSeconds: number | null = null
+          let isFresh = false
+          if (lastSeen) {
+            const t = new Date(lastSeen).getTime()
+            if (!Number.isNaN(t)) {
+              freshnessSeconds = Math.floor((Date.now() - t) / 1000)
+              isFresh = freshnessSeconds <= 300
+            }
+          }
+          return {
+            agentId,
+            id: agentId,
+            hostname,
+            roles,
+            status,
+            cpuCount,
+            memoryGb,
+            diskFreeGb,
+            loadAverage,
+            lastSeen,
+            freshnessSeconds,
+            isFresh,
+            raw: a,
+          }
+        })
+
+        normalized.sort((A, B) => {
+          if ((A.isFresh ? 1 : 0) !== (B.isFresh ? 1 : 0)) return (A.isFresh ? -1 : 1)
+          const aIdle = (A.status === 'idle') ? 1 : 0
+          const bIdle = (B.status === 'idle') ? 1 : 0
+          if (aIdle !== bIdle) return (bIdle - aIdle)
+          return String(A.agentId || '').localeCompare(String(B.agentId || ''))
+        })
+
+        if (mounted) {
+          AGENTS = normalized
+          setAgentsState(normalized)
+        }
+      } catch (e) {
+        console.warn('Failed to fetch agents registry', e)
+      }
+    }
+    fetchAgents()
+    const iv = setInterval(fetchAgents, 60000)
+    return () => { mounted = false; clearInterval(iv) }
+  }, [])
+
+
+
   function createNewTask(initialTitle = ''): Task {
     const id = generateTaskId(true)
-    const newTask: Task & { messages?: any[] } = {
+    const defaultAgent = AGENTS[0]
+    const newTask: Task & { messages?: any[]; routing?: any; updatedAt?: string } = {
       taskId: id,
       title: initialTitle || '',
       status: 'pending_review',
@@ -936,6 +1157,8 @@ export default function App() {
       proposedActions: [],
       selectedAction: null,
       notes: '',
+      routing: { selectedAgentId: defaultAgent.id, selectedHostname: defaultAgent.hostname, selectedRole: defaultAgent.roles[0] },
+      updatedAt: new Date().toISOString(),
       messages: [{ id: uuid('msg-'), author: 'system', text: 'New task created', createdAt: new Date().toISOString() }],
     }
     setTasks((prev) => [newTask as Task, ...prev])
@@ -1418,13 +1641,26 @@ export default function App() {
         </div>
       ) : null}
       <div className="board">
-        {isChatView && isMobileApp ? (
+        {isMobileApp ? (
           <div className="chat-home">
             <div className="threads-list">
-              {tasks.map((t) => (
+              <div style={{ padding: '8px 12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <h3 style={{ margin: 0 }}>Active Tasks</h3>
+                <button className="small" onClick={() => { createNewTask(); }} style={{ padding: '6px 10px' }}>+ New Task</button>
+              </div>
+              {tasks.filter((t) => t.status !== 'completed').map((t) => (
                 <div key={t.taskId} className={'thread-item' + (selected === t.taskId ? ' selected' : '')} onClick={() => setSelected(t.taskId)}>
-                  <div className="thread-title">{t.title || t.taskId}</div>
-                  <div className="thread-sub"><span className="thread-status">{t.status}</span> <span className="thread-reviewer">{(t.reviewerSummary || '').split('\n')[0]}</span></div>
+                  <TaskCard t={t} onClick={() => setSelected(t.taskId)} />
+                </div>
+              ))}
+
+              <div style={{ padding: '8px 12px', marginTop: 8 }}>
+                <h3 style={{ margin: 0 }}>Recent Tasks</h3>
+              </div>
+
+              {tasks.filter((t) => t.status === 'completed').slice(0, 10).map((t) => (
+                <div key={t.taskId} onClick={() => setSelected(t.taskId)}>
+                  <TaskCard t={t} onClick={() => setSelected(t.taskId)} />
                 </div>
               ))}
             </div>
