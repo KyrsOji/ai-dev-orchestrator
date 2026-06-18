@@ -3,19 +3,18 @@ export PATH="/home/kojiyah/tools/kafka/bin:$PATH"
 set -euo pipefail
 
 BOOTSTRAP="${KAFKA_BOOTSTRAP:-localhost:9092}"
-RESULT_TOPIC="ai.dev.result.out"
-TASK_TOPIC="ai.dev.task.ofbiz"
-APPROVAL_TOPIC="ai.dev.approval.required"
+REQ_TOPIC="ai.dev.approval.required"
+RESP_TOPIC="ai.dev.review.out"
 TIMEOUT=20
 
-# Sample messages
-DOCS_MSG='{"taskId":"rev-doc-kafka-1","status":"success","metadata":{"change_type":"docs-only"}}'
-SECRETS_MSG='{"taskId":"rev-secret-kafka-1","status":"success","metadata":{"contains_secrets":true}}'
+# Sample approval request messages
+APPROVAL_REQ_AUTO='{"taskId":"mx-auto-1","status":"success","title":"Auto docs","metadata":{"change_type":"docs-only"}}'
+APPROVAL_REQ_PENDING='{"taskId":"mx-pend-1","status":"success","title":"Requires human","metadata":{"change_type":"commit"}}'
 
 PRODUCER_CMD="$(command -v kafka-console-producer.sh || command -v kafka-console-producer || true)"
 CONSUMER_CMD="$(command -v kafka-console-consumer.sh || command -v kafka-console-consumer || true)"
 
-echo "=== reviewer-kafka-smoke ==="
+echo "=== matrix-kafka-smoke ==="
 
 echo "Bootstrap: ${BOOTSTRAP}"
 
@@ -117,60 +116,63 @@ fi
 
 PASS=0; FAIL=0
 
-# Test 1: docs-only -> expect ai.dev.task.ofbiz
-echo "[test] docs-only -> expect publish on ${TASK_TOPIC}"
+# Test 1: auto-approve docs-only -> expect response on RESP_TOPIC
+echo "[test] docs-only -> expect publish on ${RESP_TOPIC}"
 if [ -n "$PRODUCER_CMD" ]; then
-  publish_via_cli "$RESULT_TOPIC" "$DOCS_MSG" || { echo "publish failed" >&2; exit 3; }
+  publish_via_cli "$REQ_TOPIC" "$APPROVAL_REQ_AUTO" || { echo "publish failed" >&2; exit 3; }
 else
-  publish_via_python "$RESULT_TOPIC" "$DOCS_MSG" || { echo "publish failed" >&2; exit 3; }
+  publish_via_python "$REQ_TOPIC" "$APPROVAL_REQ_AUTO" || { echo "publish failed" >&2; exit 3; }
 fi
 
-# Run reviewer to consume one message (non-dry-run to exercise Kafka transport)
-python3 -m reviewer.service --consume-topic "$RESULT_TOPIC" --timeout 20 || true
-# Now verify published to TASK_TOPIC
+# Run bridge to consume and process (non-dry-run to exercise Kafka transport)
+python3 -m matrix_bridge.bridge --consume-topic "$REQ_TOPIC" --timeout 20 || true
+
+# Now verify published to RESP_TOPIC
 if [ -n "$CONSUMER_CMD" ]; then
-  if consume_via_cli "$TASK_TOPIC" 10; then
-    echo "[ok] task topic published"
+  if consume_via_cli "$RESP_TOPIC" 10; then
+    echo "[ok] response topic published"
     PASS=$((PASS+1))
   else
-    echo "[fail] task topic not published or consume failed"
+    echo "[fail] response topic not published or consume failed"
     FAIL=$((FAIL+1))
   fi
 else
-  if consume_via_python "$TASK_TOPIC" 10; then
-    echo "[ok] task topic published (python consumer)"
+  if consume_via_python "$RESP_TOPIC" 10; then
+    echo "[ok] response topic published (python consumer)"
     PASS=$((PASS+1))
   else
-    echo "[fail] task topic not published (python consumer)"
+    echo "[fail] response topic not published (python consumer)"
     FAIL=$((FAIL+1))
   fi
 fi
 
-# Test 2: secrets -> expect ai.dev.approval.required
-echo "[test] secrets -> expect publish on ${APPROVAL_TOPIC}"
+# Test 2: pending requires approval -> bridge will post to Matrix (mock) and not auto-approve
+# We still expect no automatic response for pending
+# Publish pending request
 if [ -n "$PRODUCER_CMD" ]; then
-  publish_via_cli "$RESULT_TOPIC" "$SECRETS_MSG" || { echo "publish failed" >&2; exit 3; }
+  publish_via_cli "$REQ_TOPIC" "$APPROVAL_REQ_PENDING" || { echo "publish failed" >&2; exit 3; }
 else
-  publish_via_python "$RESULT_TOPIC" "$SECRETS_MSG" || { echo "publish failed" >&2; exit 3; }
+  publish_via_python "$REQ_TOPIC" "$APPROVAL_REQ_PENDING" || { echo "publish failed" >&2; exit 3; }
 fi
 
-python3 -m reviewer.service --consume-topic "$RESULT_TOPIC" --timeout 20 || true
+python3 -m matrix_bridge.bridge --consume-topic "$REQ_TOPIC" --timeout 20 || true
 
+# Try to consume a response from RESP_TOPIC; if there's one, that's unexpected for pending
 if [ -n "$CONSUMER_CMD" ]; then
-  if consume_via_cli "$APPROVAL_TOPIC" 10; then
-    echo "[ok] approval topic published"
-    PASS=$((PASS+1))
-  else
-    echo "[fail] approval topic not published or consume failed"
+  if consume_via_cli "$RESP_TOPIC" 5; then
+    echo "[fail] unexpected response published for pending request"
     FAIL=$((FAIL+1))
+  else
+    echo "[ok] no auto-response for pending request"
+    PASS=$((PASS+1))
   fi
 else
-  if consume_via_python "$APPROVAL_TOPIC" 10; then
-    echo "[ok] approval topic published (python consumer)"
-    PASS=$((PASS+1))
-  else
-    echo "[fail] approval topic not published (python consumer)"
+  if consume_via_python "$RESP_TOPIC" 5; then
+    echo "[fail] unexpected response published for pending request (python consumer)"
     FAIL=$((FAIL+1))
+  else
+    echo "[ok] no auto-response for pending request (python consumer)"
+    PASS=$((PASS+1))
   fi
 fi
 
