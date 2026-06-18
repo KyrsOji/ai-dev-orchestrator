@@ -160,6 +160,7 @@ function TaskDetail({
   standaloneMode,
   standaloneToken,
   chatMode,
+  openTask,
 }: {
   task: Task
   onSave: (t: Task) => Promise<any>
@@ -170,29 +171,78 @@ function TaskDetail({
   standaloneMode?: boolean
   standaloneToken?: string | null
   chatMode?: boolean
+  openTask?: (id: string) => void
 }) {
   const [local, setLocal] = useState<Task>(task)
   const [toast, setToast] = useState<{ type: 'success' | 'warning' | 'error' | null; message: string | null }>({ type: null, message: null })
   const [isMobile, setIsMobile] = useState<boolean>(typeof window !== 'undefined' ? window.innerWidth <= 600 : false)
   useEffect(() => setLocal(task), [task])
 
+  // Normalize messages helper (ensures consistent message types and lifecycle messages)
+  function normalizeMessages(rawMessages: any[] | undefined) {
+    const raw = (Array.isArray(rawMessages) ? rawMessages : [])
+    const normalized: any[] = raw.map((m: any) => {
+      const authorRaw = (m && m.author) ? m.author : 'system'
+      let author: any = authorRaw
+      if (authorRaw === 'openhands') author = 'result'
+      if (authorRaw === 'second_opinion') author = 'second_opinion'
+      if (authorRaw === 'follow_up') author = 'follow_up'
+      if (authorRaw === 'system') {
+        if (m && m.data && m.data.followUpTask) author = 'follow_up'
+        else if (m && typeof m.text === 'string' && /follow-?up task created/i.test(m.text)) author = 'follow_up'
+      }
+      return { ...m, author }
+    })
+
+    // Ensure reviewer message present when reviewerSummary exists
+    if (task && task.reviewerSummary) {
+      const hasReviewer = normalized.find((m: any) => m.author === 'reviewer')
+      if (!hasReviewer) {
+        normalized.push({ id: uuid('msg-'), author: 'reviewer', text: task.reviewerSummary, createdAt: task.updatedAt || new Date().toISOString() })
+      }
+    }
+
+    // Ensure Task Created system message exists
+    const hasCreated = normalized.find((m: any) => m.author === 'system' && m.text && /created/i.test(String(m.text)))
+    if (!hasCreated) {
+      const createdAt = task && task.updatedAt ? task.updatedAt : (normalized.length ? (normalized[0].createdAt || new Date().toISOString()) : new Date().toISOString())
+      normalized.push({ id: uuid('msg-'), author: 'system', text: 'Task Created', createdAt })
+    }
+
+    // Synthesize Runner Started and Runner Result Available messages around result messages
+    const augmented: any[] = []
+    normalized.forEach((m: any) => {
+      if (m.author === 'result') {
+        const t = m.createdAt ? new Date(m.createdAt).toISOString() : new Date().toISOString()
+        const startExists = normalized.find((x: any) => x.author === 'system' && /Runner Started/i.test(String(x.text)) && Math.abs(new Date(x.createdAt || t).getTime() - new Date(t).getTime()) < 2000)
+        if (!startExists) augmented.push({ id: uuid('msg-'), author: 'system', text: 'Runner Started', createdAt: new Date(new Date(t).getTime() - 50).toISOString() })
+        const availableExists = normalized.find((x: any) => x.author === 'system' && /Runner Result Available/i.test(String(x.text)) && Math.abs(new Date(x.createdAt || t).getTime() - new Date(t).getTime()) < 2000)
+        if (!availableExists) augmented.push({ id: uuid('msg-'), author: 'system', text: 'Runner Result Available', createdAt: new Date(new Date(t).getTime() + 50).toISOString() })
+      }
+    })
+
+    const all = [...normalized, ...augmented]
+    all.sort((A, B) => new Date(A.createdAt || 0).getTime() - new Date(B.createdAt || 0).getTime())
+    return all
+  }
+
   // Chat/thread state for chat-mode
   const [messages, setMessages] = useState<any[]>(() => {
     try {
-      if (task && Array.isArray((task as any).messages) && (task as any).messages.length) return (task as any).messages
+      if (task && Array.isArray((task as any).messages) && (task as any).messages.length) return normalizeMessages((task as any).messages)
     } catch (e) {}
     const init: any[] = []
-    init.push({ id: uuid('msg-'), author: 'system', text: 'Task created', createdAt: new Date().toISOString() })
+    init.push({ id: uuid('msg-'), author: 'system', text: 'Task Created', createdAt: new Date().toISOString() })
     if (task && (task as any).notes) init.push({ id: uuid('msg-'), author: 'user', text: (task as any).notes, createdAt: new Date().toISOString() })
     if (task && task.reviewerSummary) init.push({ id: uuid('msg-'), author: 'reviewer', text: task.reviewerSummary, createdAt: new Date().toISOString() })
-    if (task && task.openhandsResponse) init.push({ id: uuid('msg-'), author: 'openhands', text: task.openhandsResponse, createdAt: new Date().toISOString() })
-    return init
+    if (task && task.openhandsResponse) init.push({ id: uuid('msg-'), author: 'result', text: task.openhandsResponse, createdAt: new Date().toISOString() })
+    return normalizeMessages(init)
   })
 
   useEffect(() => {
     // sync when underlying task messages change
     try {
-      if (local && Array.isArray((local as any).messages) && (local as any).messages.length) setMessages((local as any).messages)
+      if (local && Array.isArray((local as any).messages) && (local as any).messages.length) setMessages(normalizeMessages((local as any).messages))
     } catch (e) {}
   }, [local.messages])
 
@@ -303,7 +353,7 @@ function TaskDetail({
               </div>
             </div>
 
-        const submittedMsg = { id: uuid('msg-'), author: 'system', text: 'Submitted to reviewer.', createdAt: new Date().toISOString() }
+        const submittedMsg = { id: uuid('msg-'), author: 'system', text: 'Task Submitted', createdAt: new Date().toISOString() }
         setMessages((prev) => [...prev, submittedMsg])
         nextLocal.messages = [...(nextLocal.messages || []), submittedMsg]
         nextLocal.status = 'pending_review'
@@ -332,14 +382,19 @@ function TaskDetail({
         if (!res.ok) return
         const r = await res.json()
         if (r && r.status && r.status !== 'waiting') {
-          const resultMsg = { id: uuid('msg-'), author: 'openhands', text: r.summary || JSON.stringify(r), createdAt: r.createdAt || new Date().toISOString(), data: r }
+          const ts = r.updatedAt || r.createdAt || new Date().toISOString()
+          const startedMsg = { id: uuid('msg-'), author: 'system', text: 'Runner Started', createdAt: new Date(new Date(ts).getTime() - 50).toISOString() }
+          const resultMsg = { id: uuid('msg-'), author: 'result', text: r.summary || JSON.stringify(r), createdAt: ts, data: r }
+          const availableMsg = { id: uuid('msg-'), author: 'system', text: 'Runner Result Available', createdAt: new Date(new Date(ts).getTime() + 50).toISOString() }
+
           setMessages((prev) => {
             const exists = prev.find((m: any) => m.data && m.data.resultId && r.resultId && m.data.resultId === r.resultId)
             if (exists) return prev
-            return [...prev, resultMsg]
+            return [...prev, startedMsg, resultMsg, availableMsg]
           })
+
           // persist result into task for visibility
-          const updated = { ...local, openhandsResponse: r.summary || local.openhandsResponse, messages: [...(local.messages || []), resultMsg] }
+          const updated = { ...local, openhandsResponse: r.summary || local.openhandsResponse, messages: [...(local.messages || []), startedMsg, resultMsg, availableMsg] }
           setLocal(updated)
           try { await onSave(updated) } catch (e) {}
         }
@@ -556,7 +611,14 @@ function TaskDetail({
   }
 
   async function doDecision(decision: 'approved' | 'denied' | 'deferred') {
-    await sendActionEvent(decision, { editedAction: editedActionCandidateState, newAction: newActionCandidate })
+    const ok = await sendActionEvent(decision, { editedAction: editedActionCandidateState, newAction: newActionCandidate })
+    if (ok && decision === 'approved') {
+      const approvedMsg = { id: uuid('msg-'), author: 'system', text: 'Task Approved', createdAt: new Date().toISOString() }
+      setMessages((prev) => [...prev, approvedMsg])
+      const updatedLocal = { ...local, messages: [...(local.messages || []), approvedMsg] }
+      setLocal(updatedLocal)
+      try { await onSave(updatedLocal) } catch (e) {}
+    }
   }
 
   async function sendEditAction(a: ProposedAction) {
@@ -750,13 +812,39 @@ function TaskDetail({
         </div>
 
         <div className="messages" ref={messagesRef} style={{ overflowY: 'auto', maxHeight: '60vh', padding: 12 }}>
-          {messages.map((m) => (
-            <div key={m.id} className={`message-bubble ${m.author}`} style={{ marginBottom: 12 }}>
-              <div className="message-meta" style={{ fontSize: 12, color: '#666' }}>{m.author} · {m.createdAt ? new Date(m.createdAt).toLocaleString() : ''}</div>
-              <div className="message-text" style={{ marginTop: 6 }}>{m.text}</div>
-              {m.data ? <pre className="message-data" style={{ background: '#f7fafc', padding: 8, marginTop: 8, borderRadius: 6 }}>{JSON.stringify(m.data, null, 2)}</pre> : null}
-            </div>
-          ))}
+          {messages.map((m) => {
+            const timeStr = m.createdAt ? new Date(m.createdAt).toLocaleString() : ''
+            if (m.author === 'reviewer') {
+              return (
+                <div key={m.id} className="message-bubble reviewer" style={{ marginBottom: 12 }}>
+                  <div className="message-meta" style={{ fontSize: 12, color: '#666' }}>Reviewer · {timeStr}</div>
+                  <div className="message-text" style={{ marginTop: 6 }}>{m.text || 'Reviewer'}</div>
+                </div>
+              )
+            }
+            if (m.author === 'follow_up') {
+              const follow = (m.data && m.data.followUpTask) ? m.data.followUpTask : null
+              const taskIdStr = follow && follow.taskId ? follow.taskId : (typeof m.text === 'string' ? m.text : '(unknown)')
+              return (
+                <div key={m.id} className="message-bubble follow_up" style={{ marginBottom: 12 }}>
+                  <div className="message-meta" style={{ fontSize: 12, color: '#666' }}>Follow-up · {timeStr}</div>
+                  <div className="message-text" style={{ marginTop: 6 }}>Follow-up Task Created</div>
+                  <div style={{ marginTop: 8, display: 'flex', gap: 8, alignItems: 'center' }}>
+                    <div style={{ fontFamily: 'monospace', fontSize: 13 }}>{taskIdStr}</div>
+                    <button onClick={() => { if (openTask) openTask(taskIdStr) }}>Open</button>
+                  </div>
+                </div>
+              )
+            }
+
+            return (
+              <div key={m.id} className={`message-bubble ${m.author}`} style={{ marginBottom: 12 }}>
+                <div className="message-meta" style={{ fontSize: 12, color: '#666' }}>{m.author} · {timeStr}</div>
+                <div className="message-text" style={{ marginTop: 6 }}>{m.text}</div>
+                {m.data ? <pre className="message-data" style={{ background: '#f7fafc', padding: 8, marginTop: 8, borderRadius: 6 }}>{JSON.stringify(m.data, null, 2)}</pre> : null}
+              </div>
+            )
+          })}
         </div>
 
         <div className="composer" style={{ position: 'sticky', bottom: 0, background: '#fff', padding: 8, borderTop: '1px solid #eee' }}>
@@ -1723,6 +1811,7 @@ export default function App() {
                   standaloneMode={isStandalone}
                   standaloneToken={standaloneToken}
                   chatMode={true}
+                  openTask={(id: string) => setSelected(id)}
                 />
               ) : (
                 <div style={{ padding: 16 }}>Start a new task or select a thread</div>
@@ -1799,6 +1888,7 @@ export default function App() {
                   standaloneMode={isStandalone}
                   standaloneToken={standaloneToken}
                   chatMode={isChatView && isMobileApp}
+                  openTask={(id: string) => setSelected(id)}
                 />
               ) : (
                 <div>Select a task to view details</div>

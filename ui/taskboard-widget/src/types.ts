@@ -7,7 +7,7 @@ export interface ProposedAction {
   payload?: any
 }
 
-export type MessageAuthor = 'user' | 'system' | 'reviewer' | 'openhands' | 'runner'
+export type MessageAuthor = 'user' | 'system' | 'reviewer' | 'runner' | 'result' | 'second_opinion' | 'follow_up' | 'openhands'
 
 export interface Message {
   id: string

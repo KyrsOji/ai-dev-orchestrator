@@ -208,6 +208,11 @@ pre { white-space: pre-wrap; font-family: inherit; background: #fff; padding: 8p
 .messages { display: flex; flex-direction: column; gap: 8px; }
 .message-bubble { max-width: 92%; padding: 10px 12px; border-radius: 12px; background: #ffffff; box-shadow: 0 1px 2px rgba(0,0,0,0.04); }
 .message-bubble.user { background: #e6fffa; align-self: flex-end; }
+
+.message-bubble.result { background: #eef2ff; border: 1px solid #c7ddff; }
+.message-bubble.second_opinion { background: #f5f3ff; border: 1px solid #e9d5ff; }
+.message-bubble.follow_up { background: #ecfdf5; border: 1px solid #bbf7d0; }
+
 .message-bubble.system { background: #f1f5f9; color: #0f172a; }
 .message-bubble.openhands { background: #f8fafc; border: 1px solid #eef2ff; }
 .message-bubble.reviewer { background: #fff7ed; }
