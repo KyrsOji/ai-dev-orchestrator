@@ -194,35 +194,87 @@ function TaskDetail({
       return { ...m, author }
     })
 
+    // Determine earliest raw message timestamp (ms)
+    let earliestRawTs: number | null = null
+    for (const m of raw) {
+      if (m && m.createdAt) {
+        const t = Date.parse(m.createdAt)
+        if (!isNaN(t)) {
+          if (earliestRawTs === null || t < earliestRawTs) earliestRawTs = t
+        }
+      }
+    }
+
+    const taskUpdatedTs = task && (task as any).updatedAt ? (() => { const t = Date.parse((task as any).updatedAt); return isNaN(t) ? null : t })() : null
+    const now = Date.now()
+
+    // Base timestamp for synthetic Task Created: prefer earliestRawTs - 10s, else task.updatedAt - 10s, else now - 20s
+    let baseTaskCreated: number
+    if (earliestRawTs !== null) baseTaskCreated = earliestRawTs - 10000
+    else if (taskUpdatedTs !== null) baseTaskCreated = taskUpdatedTs - 10000
+    else baseTaskCreated = now - 20000
+
+    if (baseTaskCreated > now) baseTaskCreated = now - 20000
+
+    const augmented: any[] = []
+
+    // Ensure Task Created system message exists (strict match to avoid counting follow-up created)
+    const hasCreated = normalized.find((m: any) => m.author === 'system' && m.text && /task created/i.test(String(m.text)))
+    if (!hasCreated) {
+      augmented.push({ id: uuid('msg-'), author: 'system', text: 'Task Created', createdAt: new Date(baseTaskCreated).toISOString() })
+    }
+
+    // Ensure user notes present if task.notes exists and no explicit user message
+    if (task && (task as any).notes) {
+      const hasUser = normalized.find((m: any) => m.author === 'user' && m.text && String(m.text).trim())
+      if (!hasUser) {
+        augmented.push({ id: uuid('msg-'), author: 'user', text: (task as any).notes, createdAt: new Date(baseTaskCreated + 1000).toISOString() })
+      }
+    }
+
     // Ensure reviewer message present when reviewerSummary exists
     if (task && task.reviewerSummary) {
       const hasReviewer = normalized.find((m: any) => m.author === 'reviewer')
       if (!hasReviewer) {
-        normalized.push({ id: uuid('msg-'), author: 'reviewer', text: task.reviewerSummary, createdAt: task.updatedAt || new Date().toISOString() })
+        augmented.push({ id: uuid('msg-'), author: 'reviewer', text: task.reviewerSummary, createdAt: new Date(baseTaskCreated + 2000).toISOString() })
       }
-    }
-
-    // Ensure Task Created system message exists
-    const hasCreated = normalized.find((m: any) => m.author === 'system' && m.text && /created/i.test(String(m.text)))
-    if (!hasCreated) {
-      const createdAt = task && task.updatedAt ? task.updatedAt : (normalized.length ? (normalized[0].createdAt || new Date().toISOString()) : new Date().toISOString())
-      normalized.push({ id: uuid('msg-'), author: 'system', text: 'Task Created', createdAt })
     }
 
     // Synthesize Runner Started and Runner Result Available messages around result messages
-    const augmented: any[] = []
     normalized.forEach((m: any) => {
       if (m.author === 'result') {
-        const t = m.createdAt ? new Date(m.createdAt).toISOString() : new Date().toISOString()
-        const startExists = normalized.find((x: any) => x.author === 'system' && /Runner Started/i.test(String(x.text)) && Math.abs(new Date(x.createdAt || t).getTime() - new Date(t).getTime()) < 2000)
-        if (!startExists) augmented.push({ id: uuid('msg-'), author: 'system', text: 'Runner Started', createdAt: new Date(new Date(t).getTime() - 50).toISOString() })
-        const availableExists = normalized.find((x: any) => x.author === 'system' && /Runner Result Available/i.test(String(x.text)) && Math.abs(new Date(x.createdAt || t).getTime() - new Date(t).getTime()) < 2000)
-        if (!availableExists) augmented.push({ id: uuid('msg-'), author: 'system', text: 'Runner Result Available', createdAt: new Date(new Date(t).getTime() + 50).toISOString() })
+        const resultTsRaw = m.createdAt ? Date.parse(m.createdAt) : NaN
+        const rTs = (!isNaN(resultTsRaw)) ? resultTsRaw : (baseTaskCreated + 3000)
+        const startTs = rTs - 2000 // Runner Started ~2s before result
+        const availableTs = rTs + 1000 // Runner Result Available ~1s after result
+
+        const startExists = normalized.find((x: any) => x.author === 'system' && /Runner Started/i.test(String(x.text)) && Math.abs((Date.parse(x.createdAt || '') || rTs) - rTs) < 300000)
+        if (!startExists) augmented.push({ id: uuid('msg-'), author: 'system', text: 'Runner Started', createdAt: new Date(startTs).toISOString() })
+
+        const availableExists = normalized.find((x: any) => x.author === 'system' && /Runner Result Available/i.test(String(x.text)) && Math.abs((Date.parse(x.createdAt || '') || rTs) - rTs) < 300000)
+        if (!availableExists) augmented.push({ id: uuid('msg-'), author: 'system', text: 'Runner Result Available', createdAt: new Date(availableTs).toISOString() })
       }
     })
 
+    // Add augmented synthetic messages to the list and sort
     const all = [...normalized, ...augmented]
-    all.sort((A, B) => new Date(A.createdAt || 0).getTime() - new Date(B.createdAt || 0).getTime())
+    all.sort((A, B) => {
+      const aT = Date.parse(A.createdAt || '') || 0
+      const bT = Date.parse(B.createdAt || '') || 0
+      if (aT === bT) return (A.id || '').localeCompare(B.id || '')
+      return aT - bT
+    })
+
+    // Adjust duplicates to ensure strictly increasing timestamps (1ms increments)
+    for (let i = 1; i < all.length; i++) {
+      const prevT = Date.parse(all[i - 1].createdAt || '') || 0
+      let curT = Date.parse(all[i].createdAt || '') || 0
+      if (curT <= prevT) {
+        curT = prevT + 1
+        all[i].createdAt = new Date(curT).toISOString()
+      }
+    }
+
     return all
   }
 
