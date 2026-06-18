@@ -229,3 +229,15 @@ pre { white-space: pre-wrap; font-family: inherit; background: #fff; padding: 8p
   .messages { max-height: calc(100vh - 260px); overflow: auto; padding-bottom: 8px; }
 }
 
+
+/* Agent Capacity panel styles */
+.agent-list { display: flex; flex-direction: column; gap: 8px; }
+.agent-item { width: 100%; box-sizing: border-box; word-break: break-word; }
+.sidebar .agent-item { padding: 8px; border-radius: 6px; background: #fff; border: 1px solid #f1f5f9; margin-bottom: 8px; }
+.sidebar .section-header h3 { margin: 0; }
+@media (max-width: 600px) {
+  .panel .agent-item { padding: 10px; }
+  /* hide desktop sidebar on mobile */
+  .sidebar { display: none; }
+}
+

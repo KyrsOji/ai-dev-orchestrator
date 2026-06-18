@@ -280,6 +280,29 @@ function TaskDetail({
     try {
       const ok = await sendActionEvent('approved', { newAction: actionCreated })
       if (ok) {
+            {/* Agent Capacity panel (mobile) */}
+            <div className="panel" style={{ margin: '8px 12px' }}>
+              <h4 style={{ margin: 0 }}>Agent Capacity</h4>
+              <div className="agent-list">
+                {agentsState.map((a) => (
+                  <div key={a.id || a.agentId} className="agent-item" style={{ padding: 8, borderRadius: 6, border: '1px solid #f1f5f9', background: '#fff', marginTop: 8 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <div style={{ fontWeight: 700 }}>{a.agentId}</div>
+                      <div style={{ fontSize: 16 }}>{!a.isFresh ? '🔴' : (a.status === 'idle' ? '🟢' : '🟡')}</div>
+                    </div>
+                    <div className="muted" style={{ fontSize: 12 }}>{a.hostname} · {(a.roles || []).join(', ')}</div>
+                    <div style={{ display: 'flex', gap: 12, marginTop: 6, flexWrap: 'wrap' }}>
+                      <div>CPU: {a.cpuCount ?? '-'}</div>
+                      <div>Mem: {a.memoryGb != null ? a.memoryGb.toFixed(1) + ' GB' : '-'}</div>
+                      <div>Disk: {a.diskFreeGb != null ? a.diskFreeGb.toFixed(1) + ' GB' : '-'}</div>
+                      <div>Load: {a.loadAverage != null ? a.loadAverage : '-'}</div>
+                    </div>
+                    <div className="muted" style={{ marginTop: 6, fontSize: 12 }}>{timeAgo(a.lastSeen)} · {a.isFresh ? 'fresh' : 'stale'}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
         const submittedMsg = { id: uuid('msg-'), author: 'system', text: 'Submitted to reviewer.', createdAt: new Date().toISOString() }
         setMessages((prev) => [...prev, submittedMsg])
         nextLocal.messages = [...(nextLocal.messages || []), submittedMsg]
@@ -1666,6 +1689,29 @@ export default function App() {
                 </div>
               ))}
             </div>
+            {/* Agent Capacity panel (mobile) */}
+            <div className="panel" style={{ margin: '8px 12px' }}>
+              <h4 style={{ margin: 0 }}>Agent Capacity</h4>
+              <div className="agent-list">
+                {agentsState.map((a) => (
+                  <div key={a.id || a.agentId} className="agent-item" style={{ padding: 8, borderRadius: 6, border: '1px solid #f1f5f9', background: '#fff', marginTop: 8 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <div style={{ fontWeight: 700 }}>{a.agentId}</div>
+                      <div style={{ fontSize: 16 }}>{!a.isFresh ? '🔴' : (a.status === 'idle' ? '🟢' : '🟡')}</div>
+                    </div>
+                    <div className="muted" style={{ fontSize: 12 }}>{a.hostname} · {(a.roles || []).join(', ')}</div>
+                    <div style={{ display: 'flex', gap: 12, marginTop: 6, flexWrap: 'wrap' }}>
+                      <div>CPU: {a.cpuCount ?? '-'}</div>
+                      <div>Mem: {a.memoryGb != null ? a.memoryGb.toFixed(1) + ' GB' : '-'}</div>
+                      <div>Disk: {a.diskFreeGb != null ? a.diskFreeGb.toFixed(1) + ' GB' : '-'}</div>
+                      <div>Load: {a.loadAverage != null ? a.loadAverage : '-'}</div>
+                    </div>
+                    <div className="muted" style={{ marginTop: 6, fontSize: 12 }}>{timeAgo(a.lastSeen)} · {a.isFresh ? 'fresh' : 'stale'}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
             <div className="detail-pane">
               {current ? (
                 <TaskDetail
@@ -1758,6 +1804,30 @@ export default function App() {
                 <div>Select a task to view details</div>
               )}
             </div>
+            <div className="sidebar">
+              <div className="sidebar-section">
+                <div className="section-header"><h3>Agent Capacity</h3></div>
+                <div className="section-list">
+                  {agentsState.map((a) => (
+                    <div key={a.id || a.agentId} className="card" style={{ padding: 8 }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <div style={{ fontWeight: 700 }}>{a.agentId}</div>
+                        <div style={{ fontSize: 14 }}>{!a.isFresh ? '\ud83d\udd34' : (a.status === 'idle' ? '\ud83d\udfe2' : '\ud83d\udfe1')}</div>
+                      </div>
+                      <div className="muted">{a.hostname} \u00b7 {(a.roles || []).join(', ')}</div>
+                      <div style={{ display:'flex', gap:8, marginTop:6, fontSize:13 }}>
+                        <div>CPU: {a.cpuCount ?? '-'}</div>
+                        <div>Mem: {a.memoryGb != null ? a.memoryGb.toFixed(1) + ' GB' : '-'}</div>
+                        <div>Disk: {a.diskFreeGb != null ? a.diskFreeGb.toFixed(1) + ' GB' : '-'}</div>
+                        <div>Load: {a.loadAverage != null ? a.loadAverage : '-'}</div>
+                      </div>
+                      <div className='muted' style={{ marginTop:6, fontSize:12 }}>Last: {timeAgo(a.lastSeen)} \u00b7 {a.isFresh ? 'fresh' : 'stale'}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+
           </>
         )}
       </div>
