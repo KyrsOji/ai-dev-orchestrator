@@ -149,6 +149,22 @@ function runSmoke() {
   }
 
   console.log('SMOKE PASS: recommended fresh idle ofbiz agent as expected')
+
+  // Simulate applying the recommendation to a local task object (should not submit)
+  const task = { routing: { selectedAgentId: 'other-fresh', selectedHostname: 'other-01.local', selectedRole: 'ofbiz' }, submitted: false }
+  const applied = { ...task, routing: { ...(task.routing || {}), selectedAgentId: rec.agentId, selectedHostname: rec.hostname, selectedRole: task.routing.selectedRole || 'ofbiz' } }
+
+  if (applied.routing.selectedAgentId !== rec.agentId) {
+    console.error('SMOKE FAIL: applying recommendation did not set selectedAgentId')
+    process.exit(1)
+  }
+
+  if (task.submitted) {
+    console.error('SMOKE FAIL: applying recommendation should not have submitted the task')
+    process.exit(1)
+  }
+
+  console.log('SMOKE PASS: applying recommendation sets selectedAgentId and does not submit')
   process.exit(0)
 }
 

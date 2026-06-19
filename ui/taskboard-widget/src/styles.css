@@ -258,3 +258,13 @@ pre { white-space: pre-wrap; font-family: inherit; background: #fff; padding: 8p
   .recommend-card { padding: 10px; }
 }
 
+
+/* Recommendation card action styles */
+.recommend-card .small { padding: 10px 12px; border-radius: 8px; font-weight: 700; }
+.recommend-card .selected-badge { background: #10b981; color: #fff; padding: 6px 10px; border-radius: 999px; font-weight: 700; display: inline-block; }
+
+@media (max-width: 600px) {
+  .recommend-card { width: 100%; box-sizing: border-box; }
+  .recommend-card .small { width: 100%; }
+}
+

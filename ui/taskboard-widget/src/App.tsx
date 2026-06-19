@@ -187,6 +187,7 @@ function TaskDetail({
   // Compute recommendation for the currently selected role (pure, re-run each render)
   const selectedRoleForRec = (local && local.routing && (local.routing.selectedRole || local.routing.role)) || 'general'
   const recommendation = recommendAgent(selectedRoleForRec, agents || [])
+  const recommendationApplied = !!(recommendation && local && local.routing && local.routing.selectedAgentId === recommendation.agentId)
 
 
   useEffect(() => setLocal(task), [task])
@@ -890,6 +891,18 @@ function TaskDetail({
               <div className="muted" style={{ fontSize: 12 }}>{recommendation.hostname}</div>
               <div style={{ marginTop: 6 }}>
                 {recommendation.reasons.map((r, i) => <div key={i} style={{ fontSize: 13, lineHeight: '1.25' }}>{'\u2713'} {r}</div>)}
+              </div>
+              <div style={{ marginTop: 8, display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+                {recommendationApplied ? (
+                  <div className="selected-badge">Recommended agent selected</div>
+                ) : (
+                  <button className="small" onClick={() => {
+                    const currentRole = (local && local.routing && (local.routing.selectedRole || local.routing.role)) || selectedRoleForRec
+                    update({ routing: { ...(local.routing || {}), selectedAgentId: recommendation.agentId, selectedHostname: recommendation.hostname, selectedRole: currentRole } })
+                    setToast({ type: 'success', message: 'Applied recommended agent (local only)' })
+                    setTimeout(() => setToast({ type: null, message: null }), 3000)
+                  }} style={{ background: '#065f46', color: '#fff', border: 'none' }}>Use Recommended Agent</button>
+                )}
               </div>
             </div>
           ) : null}
