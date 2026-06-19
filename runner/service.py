@@ -22,12 +22,13 @@ import sys
 import time
 import uuid
 from datetime import datetime
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple, Callable
 
 from . import run_directory
 from . import result_publisher
 from . import openhands_executor
 from . import execution_guard
+from matrix_bridge.kafka_client import KafkaClient
 
 
 # Configuration
@@ -153,8 +154,10 @@ def _consume_one_task_cli(topic: str, timeout_ms: int = 10000) -> Tuple[Optional
         "--group",
         CONSUMER_GROUP,
     ]
-    if KAFKA_CLIENT_CONFIG:
-        cmd.extend(["--consumer.config", KAFKA_CLIENT_CONFIG])
+    # Read KAFKA_CLIENT_CONFIG at runtime to pick up environment changes
+    client_config = os.environ.get("KAFKA_CLIENT_CONFIG")
+    if client_config:
+        cmd.extend(["--consumer.config", client_config])
 
     try:
         proc = subprocess.run(cmd, capture_output=True, text=True, timeout=(timeout_ms / 1000.0 + 5))
@@ -194,6 +197,106 @@ def _shutdown(signum: int, frame: object) -> None:
     _running = False
 
 
+
+def process_task(task: Dict[str, Any], publisher: Optional[Callable[[Dict[str, Any], str], Tuple[bool, Dict[str, Any]]]] = None, db_path: Optional[str] = None) -> Dict[str, Any]:
+    """Process a single task payload. Returns a dict describing outcome.
+
+    publisher: callable(result_dict, topic) -> (success: bool, meta: dict)
+    """
+    # Local import to avoid top-level dependency ordering issues in tests
+    try:
+        from .dedup import init_db, get_task_status, upsert_processed_task, is_terminal_status
+    except Exception:
+        # If dedup module missing, behave without persistence
+        init_db = lambda *a, **k: None
+        get_task_status = lambda *a, **k: None
+        upsert_processed_task = lambda *a, **k: False
+        is_terminal_status = lambda s: False
+
+    if publisher is None:
+        publisher = result_publisher.publish_result
+
+    # Ensure DB initialized (no-op if already present)
+    try:
+        init_db(db_path)
+    except Exception:
+        logging.exception("Could not initialize dedup DB; continuing without persistence")
+
+    task_id = task.get("taskId") or task.get("id")
+    if not task_id:
+        logging.error("Received task payload missing taskId: %s", task)
+        return {"error": "missing_task_id"}
+
+    # Check for duplicates
+    try:
+        existing_status = get_task_status(task_id, db_path)
+    except Exception:
+        existing_status = None
+
+    if existing_status and is_terminal_status(existing_status):
+        logging.info("Duplicate task detected: %s", task_id)
+        logging.info("Skipping previously completed task")
+        return {"skipped": True, "task_id": task_id, "status": existing_status}
+
+    run_dir = None
+    try:
+        # Prepare run directory
+        rd_meta = run_directory.prepare_run_directory(task)
+        run_dir = rd_meta.get("runDirectory")
+        logging.info("Run directory created: %s", run_dir)
+
+        # Build result message (dry-run by default)
+        execution_mode = RUNNER_MODE
+        if execution_mode == "execute":
+            logging.info("OpenHands execution mode: execute (timeout=%s seconds)", OPENHANDS_TIMEOUT_SECONDS)
+            allowed, guard_meta = execution_guard.guard_execution(task, run_dir)
+            if not allowed:
+                reason = guard_meta.get("reason", "blocked_by_execution_guard")
+                logging.error("Execution guard blocked execution: %s", reason)
+                result_msg = build_result_message(task, run_dir, status="failed", summary=f"Execution blocked by guard: {reason}")
+            else:
+                exec_meta = openhands_executor.execute_task(run_dir, task)
+                exec_status = exec_meta.get("status")
+                if exec_status in ("completed", "executed"):
+                    status = "executed"
+                elif exec_status in ("failed", "error", "timeout"):
+                    status = "failed"
+                else:
+                    status = exec_status or "failed"
+                summary = exec_meta.get("summary", "") or exec_meta.get("stdout", "")[:1000]
+                result_msg = build_result_message(task, run_dir, status=status, summary=summary)
+        else:
+            logging.info("OpenHands execution mode: dry-run; skipping execution")
+            result_msg = build_result_message(task, run_dir, status="dry_run_completed")
+
+        # Publish result
+        try:
+            success, pub_meta = publisher(result_msg, topic=RESULT_TOPIC)
+        except TypeError:
+            # Some publisher implementations may not accept topic kwarg
+            success, pub_meta = publisher(result_msg, RESULT_TOPIC)
+
+        if success:
+            logging.info("Result published successfully for task %s", task_id)
+            # Record in dedup DB only for terminal statuses
+            if is_terminal_status(result_msg.get("status")):
+                try:
+                    ok = upsert_processed_task(task_id, result_msg.get("status"), result_msg.get("resultId"), db_path)
+                    if ok:
+                        logging.info("Recorded completed task: %s", task_id)
+                except Exception:
+                    logging.exception("Failed to record processed task %s", task_id)
+        else:
+            logging.error("Failed to publish result for task %s: %s", task_id, pub_meta)
+
+        return {"processed": True, "published": success, "pub_meta": pub_meta, "result_id": result_msg.get("resultId")}
+
+    except Exception as e:
+        logging.exception("Error processing task %s: %s", task_id, e)
+        return {"processed": False, "error": str(e)}
+
+
+
 def main() -> int:
     _setup_logging()
 
@@ -205,95 +308,54 @@ def main() -> int:
     signal.signal(signal.SIGTERM, _shutdown)
     signal.signal(signal.SIGINT, _shutdown)
 
-    # Main loop
+    # Initialize Kafka client for persistent consumption
     try:
-        while _running:
-            try:
-                task, meta = _consume_one_task_cli(TASK_TOPIC, timeout_ms=10000)
-            except Exception as e:  # Defensive: any unexpected exception should not crash the service
-                logging.exception("Unexpected error while attempting to consume task: %s", e)
-                time.sleep(2)
+        client = KafkaClient(dry_run=(RUNNER_MODE == "dry-run"))
+    except Exception:
+        logging.exception("Failed to initialize Kafka client")
+        return 1
+
+    logging.info("Starting persistent Kafka consumer for topic=%s group=%s", TASK_TOPIC, CONSUMER_GROUP)
+
+    # Use the KafkaClient.listen generator to receive messages continuously
+    try:
+        gen = client.listen(topic=TASK_TOPIC, group=CONSUMER_GROUP)
+    except Exception:
+        logging.exception("Failed to start Kafka consumer generator")
+        return 1
+
+    try:
+        logging.info("Consumer connected")
+        for payload, meta in gen:
+            if not _running:
+                break
+
+            # 'payload' is expected to be a dict representing the task
+            if not payload:
+                logging.debug("Received empty payload: %s", meta)
                 continue
 
-            if task is None:
-                # No task received; meta explains why (timeout, parse error, etc.)
-                logging.debug("No task consumed: %s", meta)
-                time.sleep(1)
-                continue
-
+            task = payload
             task_id = task.get("taskId") or task.get("id")
             logging.info("Task received: %s", task_id)
 
-            run_dir = None
             try:
-                # Step 1: Prepare run directory
-                rd_meta = run_directory.prepare_run_directory(task)
-                run_dir = rd_meta.get("runDirectory")
-                logging.info("Run directory created: %s", run_dir)
-
-                # Step 2: Dry-run: do not invoke OpenHands; create placeholder dispatch (already handled by run_directory)
-                # Step 3: Build and publish result
-                result_msg = build_result_message(task, run_dir, status="dry_run_completed")
-                # Step 2: Execute or dry-run via OpenHands adapter
-                # Configure mode and timeout via environment variables
-                execution_mode = RUNNER_MODE
-                try:
-                    timeout_seconds = int(os.environ.get("OPENHANDS_TIMEOUT_SECONDS", str(OPENHANDS_TIMEOUT_SECONDS)))
-                except Exception:
-                    timeout_seconds = OPENHANDS_TIMEOUT_SECONDS
-
-                if execution_mode == "execute":
-                    logging.info("OpenHands execution mode: execute (timeout=%s seconds)", timeout_seconds)
-                    # Run the execution guard before attempting to execute OpenHands
-                    allowed, guard_meta = execution_guard.guard_execution(task, run_dir)
-                    if not allowed:
-                        reason = guard_meta.get("reason", "blocked_by_execution_guard")
-                        logging.error("Execution guard blocked execution: %s", reason)
-                        result_msg = build_result_message(task, run_dir, status="failed", summary=f"Execution blocked by guard: {reason}")
+                res = process_task(task)
+                if res.get("skipped"):
+                    continue
+                if res.get("processed"):
+                    if res.get("published"):
+                        logging.info("Result published successfully for task %s", task_id)
                     else:
-                        # Execute using the OpenHands executor (executor reads OPENHANDS_* env vars)
-                        exec_meta = openhands_executor.execute_task(run_dir, task)
-                        # Map executor status to result status
-                        exec_status = exec_meta.get("status")
-                        if exec_status in ("completed", "executed"):
-                            status = "executed"
-                        elif exec_status in ("failed", "error", "timeout"):
-                            status = "failed"
-                        else:
-                            status = exec_status or "failed"
-                        summary = exec_meta.get("summary", "") or exec_meta.get("stdout", "")[:1000]
-                        result_msg = build_result_message(task, run_dir, status=status, summary=summary)
+                        logging.error("Failed to publish result for task %s: %s", task_id, res.get("pub_meta"))
                 else:
-                    logging.info("OpenHands execution mode: dry-run; skipping execution")
-                    result_msg = build_result_message(task, run_dir, status="dry_run_completed")
-
-                success, pub_meta = result_publisher.publish_result(result_msg, topic=RESULT_TOPIC)
-                if success:
-                    logging.info("Result published successfully for task %s", task_id)
-                else:
-                    logging.error("Failed to publish result for task %s: %s", task_id, pub_meta)
-
+                    logging.error("Processing returned error for task %s: %s", task_id, res.get("error"))
             except Exception as e:
-                # On any failure, publish a failed result and continue
-                logging.exception("Error processing task %s: %s", task_id, e)
-                summary = str(e)
-                if len(summary) > 1000:
-                    summary = summary[:1000] + "..."
-                failed_result = build_result_message(task, run_dir, status="failed", summary=summary)
-                try:
-                    success, pub_meta = result_publisher.publish_result(failed_result, topic=RESULT_TOPIC)
-                    if success:
-                        logging.info("Published failure result for task %s", task_id)
-                    else:
-                        logging.error("Failed to publish failure result for task %s: %s", task_id, pub_meta)
-                except Exception:
-                    logging.exception("Exception while attempting to publish failure result for task %s", task_id)
+                logging.exception("Unexpected error while handling task %s: %s", task_id, e)
 
-            # Continue to next message
-            time.sleep(0.2)
-
+    except Exception as e:
+        logging.exception("Unexpected error in consumer loop: %s", e)
     finally:
-        # As we invoke the console consumer per-message there is no long-lived consumer
         logging.info("Shutting down OFBiz continuous runner service")
 
     return 0
