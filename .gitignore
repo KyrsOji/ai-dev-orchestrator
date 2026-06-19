@@ -1,22 +1,6 @@
-# Keystores and certificates
-*.p12
-*.pfx
-*.pem
-*.key
-*.crt
-*.jks
-*.keystore
-# Kafka config
-kafka-client.properties
-# Logs
-logs/
-*.log
-# Environment and secret files
-.env
-.env.local
-.secret
-# Python cache
+.venv/
+.venv
 __pycache__/
 *.pyc
-# OS files
-.DS_Store
+*.pyo
+.env

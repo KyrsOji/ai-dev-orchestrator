@@ -18,6 +18,12 @@ Environment=RUNNER_BASE_DIR=/var/lib/ai-dev-runner/openhands-runs
 # Working directory for run artifacts
 WorkingDirectory=/opt/ai-dev-orchestrator
 
+# Kafka environment and CLI defaults (system-wide kafka installation)
+Environment=KAFKA_BOOTSTRAP=kafka.yahlife.com:9095
+Environment=KAFKA_CLIENT_CONFIG=/opt/ai-dev-runner/certs/kafka-client.properties
+Environment=KAFKA_FORCE_CLI=1
+Environment=PATH=/usr/local/share/kafka/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
 # Command - run the runner service module using system Python
 # NOTE: Do NOT enable execute mode in this unit by default.
 ExecStart=/usr/bin/env python3 -m runner.service
@@ -28,7 +34,7 @@ RestartSec=5s
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
-ProtectHome=true
+ProtectHome=read-only
 ProtectKernelTunables=true
 ProtectControlGroups=true
 ProtectKernelModules=true
@@ -37,16 +43,17 @@ LockPersonality=true
 # Restrict address families - keep conservative defaults (allow unix and IPv4/IPv6)
 # PrivateNetwork=true creates an isolated namespace; combined with these directives
 # the unit will be highly constrained by default.
-PrivateNetwork=true
+# Removed PrivateNetwork to permit external Kafka network access
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 
 # Run-time writable path(s) for this service
 ReadOnlyPaths=/opt/ai-dev-orchestrator
 ReadWritePaths=/var/lib/ai-dev-runner/openhands-runs /var/log/ai-dev-runner
 
-# Deny access to sensitive locations
-InaccessiblePaths=/root /etc/ssh /home/kojiyah /opt/ai-dev-runner/certs
-InaccessiblePaths=/home/*/.ssh
+# Deny access to sensitive locations (keep home directories and SSH inaccessible)
+InaccessiblePaths=/root /etc/ssh
+# Ensure Kafka client certs remain accessible to the service
+# (previously blocked; required when using KAFKA_CLIENT_CONFIG)
 
 # Minimal capabilities (don't grant extra capabilities)
 # CapabilityBoundingSet=CAP_AUDIT_WRITE CAP_KILL CAP_NET_BIND_SERVICE

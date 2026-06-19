@@ -7,8 +7,8 @@ This component provides a bridge between Kafka approval request topics and a Mat
 Design
 
 - Kafka topics:
-  - consume: ai.dev.approval.request
-  - publish: ai.dev.approval.response
+  - consume: ai.dev.approval.required
+  - publish: ai.dev.review.out
 - Matrix commands supported (mocked):
   - approve TASK_ID
   - deny TASK_ID
