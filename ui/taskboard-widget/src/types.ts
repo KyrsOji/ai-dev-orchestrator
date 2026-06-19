@@ -54,3 +54,11 @@ export interface Agent {
   raw?: any
 }
 
+
+export interface AgentRecommendation {
+  agentId: string
+  hostname: string
+  score: number
+  reasons: string[]
+}
+

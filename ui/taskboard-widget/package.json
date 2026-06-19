@@ -5,7 +5,8 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "start": "node server.js"
+    "start": "node server.js",
+    "smoke:agent-recommendation": "node scripts/smoke_agent_recommendation.js"
   },
   "dependencies": {
     "react": "^18.2.0",

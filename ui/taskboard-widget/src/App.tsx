@@ -1,6 +1,8 @@
 import React, { useEffect, useState, useRef } from 'react'
-import { Task, ProposedAction, Agent } from './types'
+import { Task, ProposedAction, Agent, AgentRecommendation } from './types'
 import { WidgetApi } from 'matrix-widget-api'
+import { recommendAgent } from './agentRecommendation'
+
 
 declare global { interface Window { matrixWidgetApi?: any; MatrixWidgetApi?: any } }
 
@@ -57,6 +59,9 @@ const STATIC_AGENTS: Agent[] = [
 ]
 
 let AGENTS = STATIC_AGENTS
+
+// recommendAgent moved to src/agentRecommendation.ts
+
 
 function timeAgo(iso?: string | number | Date) {
   if (!iso) return 'unknown'
@@ -161,6 +166,7 @@ function TaskDetail({
   standaloneToken,
   chatMode,
   openTask,
+  agents,
 }: {
   task: Task
   onSave: (t: Task) => Promise<any>
@@ -172,10 +178,17 @@ function TaskDetail({
   standaloneToken?: string | null
   chatMode?: boolean
   openTask?: (id: string) => void
+  agents: Agent[]
 }) {
   const [local, setLocal] = useState<Task>(task)
   const [toast, setToast] = useState<{ type: 'success' | 'warning' | 'error' | null; message: string | null }>({ type: null, message: null })
   const [isMobile, setIsMobile] = useState<boolean>(typeof window !== 'undefined' ? window.innerWidth <= 600 : false)
+
+  // Compute recommendation for the currently selected role (pure, re-run each render)
+  const selectedRoleForRec = (local && local.routing && (local.routing.selectedRole || local.routing.role)) || 'general'
+  const recommendation = recommendAgent(selectedRoleForRec, agents || [])
+
+
   useEffect(() => setLocal(task), [task])
 
   // Normalize messages helper (ensures consistent message types and lifecycle messages)
@@ -757,6 +770,8 @@ function TaskDetail({
   // Create new action from form
   function handleCreateSave() {
     let payload: any = {}
+
+
     try {
       payload = newPayloadText ? JSON.parse(newPayloadText) : {}
     } catch (e) {
@@ -863,6 +878,23 @@ function TaskDetail({
           </div>
         </div>
 
+
+        {/* Recommendation card (advisory only) */}
+        <div style={{ margin: '8px 0 12px 0' }}>
+          {recommendation && recommendation.agentId ? (
+            <div className="recommend-card" style={{ padding: 8, borderRadius: 6, border: '1px solid #e6fffa', background: '#f0fdf4', maxWidth: 420 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div style={{ fontWeight: 700, fontSize: 14 }}>{recommendation.agentId}</div>
+                <div style={{ fontSize: 13 }}>{recommendation.score}</div>
+              </div>
+              <div className="muted" style={{ fontSize: 12 }}>{recommendation.hostname}</div>
+              <div style={{ marginTop: 6 }}>
+                {recommendation.reasons.map((r, i) => <div key={i} style={{ fontSize: 13, lineHeight: '1.25' }}>{'\u2713'} {r}</div>)}
+              </div>
+            </div>
+          ) : null}
+        </div>
+
         <div className="messages" ref={messagesRef} style={{ overflowY: 'auto', maxHeight: '60vh', padding: 12 }}>
           {messages.map((m) => {
             const timeStr = m.createdAt ? new Date(m.createdAt).toLocaleString() : ''
@@ -873,6 +905,8 @@ function TaskDetail({
                   <div className="message-text" style={{ marginTop: 6 }}>{m.text || 'Reviewer'}</div>
                 </div>
               )
+
+
             }
             if (m.author === 'follow_up') {
               const follow = (m.data && m.data.followUpTask) ? m.data.followUpTask : null
@@ -1864,6 +1898,7 @@ export default function App() {
                   standaloneToken={standaloneToken}
                   chatMode={true}
                   openTask={(id: string) => setSelected(id)}
+                  agents={agentsState}
                 />
               ) : (
                 <div style={{ padding: 16 }}>Start a new task or select a thread</div>
@@ -1941,6 +1976,7 @@ export default function App() {
                   standaloneToken={standaloneToken}
                   chatMode={isChatView && isMobileApp}
                   openTask={(id: string) => setSelected(id)}
+                  agents={agentsState}
                 />
               ) : (
                 <div>Select a task to view details</div>

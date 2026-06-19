@@ -246,3 +246,15 @@ pre { white-space: pre-wrap; font-family: inherit; background: #fff; padding: 8p
   .sidebar { display: none; }
 }
 
+
+
+/* Recommendation card visuals */
+.recommend-card {
+  word-break: break-word;
+  max-width: 100%;
+}
+
+@media (max-width: 600px) {
+  .recommend-card { padding: 10px; }
+}
+
