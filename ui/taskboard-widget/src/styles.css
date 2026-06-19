@@ -290,3 +290,15 @@ pre { white-space: pre-wrap; font-family: inherit; background: #fff; padding: 8p
   .agent-queue .task-list { max-height: 180px; }
 }
 
+
+/* Session Chain visuals */
+.session-chain { word-break: break-word; max-width: 100%; }
+.session-chain .session-node { border-left: 2px solid transparent; padding-left: 8px; }
+.session-chain .session-node:hover { background: #ffffff; }
+.session-chain .session-node .muted { margin-top: 4px; }
+.session-chain .session-node .warning { color: #b45309; font-weight: 700; }
+@media (max-width: 600px) {
+  .session-chain { padding: 8px; }
+  .session-chain .session-node { margin-left: 0 !important; }
+}
+

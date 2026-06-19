@@ -171,6 +171,7 @@ function TaskDetail({
   openTask,
   agents,
   onResultSeen,
+  tasks,
 }: {
   task: Task
   onSave: (t: Task) => Promise<any>
@@ -184,6 +185,7 @@ function TaskDetail({
   openTask?: (id: string) => void
   agents: Agent[]
   onResultSeen?: (taskId: string, signature: string) => void
+  tasks: Task[]
 }) {
   const [local, setLocal] = useState<Task>(task)
   const [toast, setToast] = useState<{ type: 'success' | 'warning' | 'error' | null; message: string | null }>({ type: null, message: null })
@@ -193,6 +195,61 @@ function TaskDetail({
   const selectedRoleForRec = (local && local.routing && (local.routing.selectedRole || local.routing.role)) || 'general'
   const recommendation = recommendAgent(selectedRoleForRec, agents || [])
   const recommendationApplied = !!(recommendation && local && local.routing && local.routing.selectedAgentId === recommendation.agentId)
+
+  // Helper: build session chain data and render UI
+  function buildSessionTree(rootId: string) {
+    const all = Array.isArray(tasks) ? tasks : []
+    const byId: { [k: string]: Task } = {}
+    const byParent: { [k: string]: Task[] } = {}
+    all.forEach((t) => { byId[t.taskId] = t; const p = t.parentTaskId || null; if (!byParent[p]) byParent[p] = []; byParent[p].push(t) })
+
+    function buildNode(id: string) {
+      const nodeTask = byId[id] || null
+      const children = (byParent[id] || []).map((c) => buildNode(c.taskId))
+      return { task: nodeTask, children }
+    }
+
+    return buildNode(rootId)
+  }
+
+  function renderSessionChainCard() {
+    try {
+      const rootId = (local && local.rootTaskId) ? local.rootTaskId : local.taskId
+      const rootTask = (Array.isArray(tasks) ? tasks.find((t) => t.taskId === rootId) : null) || local
+      const tree = buildSessionTree(rootId)
+
+      function renderNode(node: any, depth = 0, parentTask: Task | null = null) {
+        if (!node || !node.task) return null
+        const t: Task = node.task
+        const convMissing = !t.conversationId && parentTask && !!parentTask.conversationId
+        const agentMismatch = parentTask && parentTask.routing && t.routing && (parentTask.routing.selectedAgentId !== t.routing.selectedAgentId)
+        return (
+          <div key={t.taskId} className="session-node" style={{ marginLeft: depth * 12, padding: '6px 0' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div style={{ fontWeight: depth === 0 ? 700 : 600, fontSize: depth === 0 ? 14 : 13, cursor: openTask ? 'pointer' : 'default' }} onClick={() => { if (openTask) openTask(t.taskId) }}>{depth === 0 ? 'ROOT: ' : ''}{t.taskId}</div>
+              <div style={{ fontSize: 12, color: '#666' }}>{t.routing && t.routing.selectedAgentId ? formatAgentDisplay({ agentId: t.routing.selectedAgentId, hostname: t.routing.selectedHostname || '' } as any) : ''}</div>
+            </div>
+            <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>
+              <div>Conversation: {t.conversationId || (convMissing ? <span style={{ color: '#b45309' }}>Missing OpenHands conversation context</span> : '(none)')}</div>
+              <div>Hostname: {t.routing && t.routing.selectedHostname ? t.routing.selectedHostname : '-'}</div>
+              <div>Previous run dir: {(t.context && t.context.previousRunDirectory) ? t.context.previousRunDirectory : '-'}</div>
+              {agentMismatch ? <div style={{ color: '#b45309', marginTop: 6 }}>Agent changed from parent task</div> : null}
+            </div>
+            {(node.children || []).map((c: any) => renderNode(c, depth + 1, t))}
+          </div>
+        )
+      }
+
+      return (
+        <div className="session-chain" style={{ padding: 8, borderRadius: 6, border: '1px solid #eef2ff', background: '#fbfbff', maxWidth: 520 }}>
+          <div style={{ fontWeight: 700, marginBottom: 6 }}>Session Chain</div>
+          {renderNode(tree, 0, null)}
+        </div>
+      )
+    } catch (e) {
+      return null
+    }
+  }
 
 
   useEffect(() => setLocal(task), [task])
@@ -902,6 +959,7 @@ function TaskDetail({
 
           <div style={{ display: 'flex', flexDirection: 'column', minWidth: 160 }}>
             <label style={{ fontSize: 12 }}>Agent</label>
+
             <select
               value={(local.routing && local.routing.selectedAgentId) || AGENTS[0].id}
               onChange={(e) => {
@@ -960,6 +1018,12 @@ function TaskDetail({
         </div>
 
         <div className="messages" ref={messagesRef} style={{ overflowY: 'auto', maxHeight: '60vh', padding: 12 }}>
+
+          {/* Session chain (read-only) */}
+          <div style={{ margin: '8px 0 12px 0' }}>
+            {renderSessionChainCard()}
+          </div>
+
           {messages.map((m) => {
             const timeStr = m.createdAt ? new Date(m.createdAt).toLocaleString() : ''
             if (m.author === 'reviewer') {
@@ -1057,6 +1121,10 @@ function TaskDetail({
       <div style={{ marginBottom: 8 }}>
         <strong>Connection:</strong> {widgetInfo.connected ? 'Matrix Connected' : 'Local Mode'}
       </div>
+
+      {/* Session chain (read-only) */}
+      <div style={{ margin: '8px 0 12px 0' }}>{renderSessionChainCard()}</div>
+
 
       {/* brief developer info shown only when requested */}
       {showDev ? (
@@ -2288,6 +2356,8 @@ export default function App() {
                   chatMode={true}
                   openTask={(id: string) => setSelected(id)}
                   agents={agentsState}
+                  tasks={tasks}
+
                   onResultSeen={(taskId: string, signature: string) => {
                     lastSeenResultRef.current = { ...lastSeenResultRef.current, [taskId]: signature }
                     try { localStorage.setItem('taskboard-last-seen', JSON.stringify(lastSeenResultRef.current)) } catch (e) {}
@@ -2383,6 +2453,8 @@ export default function App() {
                   standaloneMode={isStandalone}
                   standaloneToken={standaloneToken}
                   chatMode={isChatView && isMobileApp}
+                  tasks={tasks}
+
                   openTask={(id: string) => setSelected(id)}
                   agents={agentsState}
                   onResultSeen={(taskId: string, signature: string) => {
