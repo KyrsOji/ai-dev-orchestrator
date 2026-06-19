@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef } from 'react'
-import { Task, ProposedAction, Agent, AgentRecommendation } from './types'
+import { Task, ProposedAction, Agent, AgentRecommendation, Notification, NotificationType } from './types'
 import { WidgetApi } from 'matrix-widget-api'
 import { recommendAgent } from './agentRecommendation'
 
@@ -106,7 +106,7 @@ function safeStringify(obj: any) {
   }
 }
 
-const TaskCard = ({ t, onClick }: { t: any; onClick?: () => void }) => {
+const TaskCard = ({ t, onClick, hasNewResult = false }: { t: any; onClick?: () => void; hasNewResult?: boolean }) => {
   const agentId = t?.routing?.selectedAgentId || AGENTS[0].id
   const hostname = t?.routing?.selectedHostname || AGENTS[0].hostname
   const role = t?.routing?.selectedRole || (t?.routing?.role) || (AGENTS.find(a => a.id === agentId)?.roles?.[0]) || 'general'
@@ -118,7 +118,10 @@ const TaskCard = ({ t, onClick }: { t: any; onClick?: () => void }) => {
 
   return (
     <div className={'card'} onClick={onClick} style={{ padding: 10 }}>
-      <div className="card-title">{t.title || t.taskId}</div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <div className="card-title" style={{ flex: 1 }}>{t.title || t.taskId}</div>
+        {hasNewResult ? <div className="badge-new">New</div> : null}
+      </div>
       <div className="card-sub" style={{ marginTop: 6 }}>
         <span className="card-status">{t.status}</span>
         <span style={{ marginLeft: 8 }}>{agentId} · {hostname}</span>
@@ -167,6 +170,7 @@ function TaskDetail({
   chatMode,
   openTask,
   agents,
+  onResultSeen,
 }: {
   task: Task
   onSave: (t: Task) => Promise<any>
@@ -179,6 +183,7 @@ function TaskDetail({
   chatMode?: boolean
   openTask?: (id: string) => void
   agents: Agent[]
+  onResultSeen?: (taskId: string, signature: string) => void
 }) {
   const [local, setLocal] = useState<Task>(task)
   const [toast, setToast] = useState<{ type: 'success' | 'warning' | 'error' | null; message: string | null }>({ type: null, message: null })
@@ -304,6 +309,10 @@ function TaskDetail({
     if (task && task.openhandsResponse) init.push({ id: uuid('msg-'), author: 'result', text: task.openhandsResponse, createdAt: new Date().toISOString() })
     return normalizeMessages(init)
   })
+
+
+  const [headerUpdated, setHeaderUpdated] = useState<boolean>(false)
+  const [highlightedResultId, setHighlightedResultId] = useState<string | null>(null)
 
   useEffect(() => {
     // sync when underlying task messages change
@@ -456,22 +465,40 @@ function TaskDetail({
           setMessages((prev) => {
             const exists = prev.find((m: any) => m.data && m.data.resultId && r.resultId && m.data.resultId === r.resultId)
             if (exists) return prev
-            return [...prev, startedMsg, resultMsg, availableMsg]
+            const hadResultBefore = prev.some((m: any) => m.author === 'result')
+            const next = [...prev, startedMsg, resultMsg, availableMsg]
+            if (hadResultBefore) {
+              next.push({ id: uuid('msg-'), author: 'system', text: 'Runner result updated', createdAt: new Date().toISOString() })
+            }
+            return next
           })
 
           // persist result into task for visibility
           const updated = { ...local, openhandsResponse: r.summary || local.openhandsResponse, messages: [...(local.messages || []), startedMsg, resultMsg, availableMsg] }
           setLocal(updated)
           try { await onSave(updated) } catch (e) {}
+
+          // Visual indicators: highlight the new result and notify parent
+          try {
+            const sig = `${r.status || ''}|${(typeof r.summary === 'string' ? r.summary : safeStringify(r.summary || ''))}|${r.updatedAt || r.createdAt || ''}|${r.resultId || ''}|${typeof r.returnCode !== 'undefined' ? String(r.returnCode) : ''}`
+            if (typeof onResultSeen === 'function') {
+              onResultSeen(local.taskId, sig)
+            }
+          } catch (e) {}
+
+          setHighlightedResultId(r.resultId || null)
+          setHeaderUpdated(true)
+          setTimeout(() => setHeaderUpdated(false), 5000)
+          setTimeout(() => setHighlightedResultId(null), 3000)
         }
       } catch (e) {}
     }
     if (chatMode && local && local.taskId) {
       poll()
-      const iv = setInterval(poll, 5000)
+      const iv = setInterval(poll, 10000)
       return () => { cancelled = true; clearInterval(iv) }
     }
-  }, [local.taskId, chatMode])
+  }, [local.taskId, chatMode, onSave, onResultSeen])
 
 
   useEffect(() => {
@@ -1027,8 +1054,8 @@ function TaskDetail({
       ) : null}
 
       <div className="panel">
-        <h4>OpenHands output</h4>
-        <pre>{local.openhandsResponse}</pre>
+        <h4>OpenHands output {headerUpdated ? <span className="badge-updated">Updated</span> : null}</h4>
+        <pre className={highlightedResultId ? 'result-highlight' : ''}>{local.openhandsResponse}</pre>
         <div style={{ marginTop: 8 }}>
           <button className="small" onClick={copyOutput} style={{ marginRight: 8 }}>Copy Output</button>
           <button className="small" onClick={copyFor2ndOpinion}>Copy for 2nd Opinion</button>
@@ -1354,6 +1381,182 @@ export default function App() {
     const iv = setInterval(fetchAgents, 60000)
     return () => { mounted = false; clearInterval(iv) }
   }, [])
+
+  // Notification state: unread results and last-seen signatures
+  const [unreadResults, setUnreadResults] = useState<Record<string, boolean>>({});
+  const lastSeenResultRef = useRef<Record<string, string>>({});
+
+  // Notification Center state (local UI-only persistence)
+  const [notifications, setNotifications] = useState<Notification[]>(() => {
+    try {
+      const raw = (typeof window !== 'undefined' && window.localStorage) ? window.localStorage.getItem('taskboard-notifications') : null
+      return raw ? JSON.parse(raw) : []
+    } catch (e) { return [] }
+  })
+
+  const prevAgentsRef = useRef<Record<string, boolean>>({})
+  const prevTasksRef = useRef<Record<string, boolean>>({})
+
+  function persistNotifications(notifs: Notification[]) {
+    try { if (typeof window !== 'undefined' && window.localStorage) window.localStorage.setItem('taskboard-notifications', JSON.stringify(notifs)) } catch (e) {}
+  }
+
+  function addNotificationIfMissing(n: Notification) {
+    setNotifications(prev => {
+      if (prev.find(x => x.id === n.id)) return prev
+      const next = [n, ...prev].sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+      persistNotifications(next)
+      return next
+    })
+  }
+
+  useEffect(() => {
+    // Generate notifications from tasks and agents whenever these change
+    const existingIds = new Set((notifications || []).map(n => n.id))
+    const newNotifs: Notification[] = []
+    const nowIso = new Date().toISOString()
+
+    // Tasks-derived notifications
+    for (const t of (tasks || [])) {
+      try {
+        const msgs = Array.isArray(t.messages) ? t.messages : []
+
+        // Task created: synthesize if we haven't seen this task before
+        const taskCreatedId = `task_created:${t.taskId}`
+        if (!prevTasksRef.current[t.taskId]) {
+          if (!existingIds.has(taskCreatedId)) {
+            const createdAt = (t as any).createdAt || t.updatedAt || (msgs[0] && msgs[0].createdAt) || nowIso
+            newNotifs.push({ id: taskCreatedId, taskId: t.taskId, type: 'task_created', title: 'Task created', message: t.title || '', createdAt, read: selected === t.taskId })
+            existingIds.add(taskCreatedId)
+          }
+          prevTasksRef.current[t.taskId] = true
+        }
+
+        // Reviewer approved
+        if (t.status === 'approved') {
+          const id = `reviewer_approved:${t.taskId}`
+          if (!existingIds.has(id)) {
+            newNotifs.push({ id, taskId: t.taskId, type: 'reviewer_approved', title: 'Reviewer approved', message: t.reviewerSummary || '', createdAt: t.updatedAt || nowIso, read: selected === t.taskId })
+            existingIds.add(id)
+          }
+        }
+
+        for (const m of msgs) {
+          if (!m) continue
+          const author = m.author || ''
+
+          // Result updated
+          const isResult = author === 'result' || author === 'openhands' || (m.data && m.data._runner_marker)
+          if (isResult) {
+            const id = `result_updated:${t.taskId}:${m.id || m.createdAt || Math.random().toString(36).slice(2, 8)}`
+            if (!existingIds.has(id)) {
+              newNotifs.push({ id, taskId: t.taskId, type: 'result_updated', title: 'Result updated', message: (m.text || '').slice(0, 200), createdAt: m.createdAt || t.updatedAt || nowIso, read: selected === t.taskId })
+              existingIds.add(id)
+            }
+          }
+
+          // Follow-up created
+          const isFollowUp = (author === 'follow_up') || (m.data && m.data.followUpTask) || (typeof m.text === 'string' && /follow-?up task created/i.test(String(m.text)))
+          if (isFollowUp) {
+            const followUpId = (m.data && m.data.followUpTask && m.data.followUpTask.taskId) ? m.data.followUpTask.taskId : (m.id || m.createdAt)
+            const id = `follow_up:${t.taskId}:${followUpId}`
+            if (!existingIds.has(id)) {
+              const msgText = (m.data && m.data.followUpTask && m.data.followUpTask.title) ? `Follow-up: ${(m.data.followUpTask.title)}` : (m.text || '')
+              newNotifs.push({ id, taskId: t.taskId, type: 'follow_up_created', title: 'Follow-up task created', message: msgText, createdAt: m.createdAt || t.updatedAt || nowIso, read: selected === t.taskId })
+              existingIds.add(id)
+            }
+          }
+
+          // 2nd opinion added
+          if (author === 'second_opinion') {
+            const id = `opinion:${t.taskId}:${m.id || m.createdAt}`
+            if (!existingIds.has(id)) {
+              newNotifs.push({ id, taskId: t.taskId, type: 'opinion_added', title: '2nd opinion added', message: (m.text || ''), createdAt: m.createdAt || t.updatedAt || nowIso, read: selected === t.taskId })
+              existingIds.add(id)
+            }
+          }
+        }
+      } catch (e) {
+        // ignore per-task errors
+      }
+    }
+
+    // Agent stale detection: fire notification when an agent transitions from fresh->stale
+    for (const a of (agentsState || [])) {
+      const prevFresh = prevAgentsRef.current[a.agentId]
+      const isFresh = !!a.isFresh
+      const id = `agent_stale:${a.agentId}:${a.lastSeen || nowIso}`
+      if (prevFresh === undefined) {
+        prevAgentsRef.current[a.agentId] = isFresh
+      } else if (prevFresh && !isFresh) {
+        if (!existingIds.has(id)) {
+          newNotifs.push({ id, taskId: '', type: 'agent_stale', title: 'Agent became stale', message: `${a.agentId} is stale`, createdAt: a.lastSeen || nowIso, read: false })
+          existingIds.add(id)
+        }
+        prevAgentsRef.current[a.agentId] = isFresh
+      } else {
+        prevAgentsRef.current[a.agentId] = isFresh
+      }
+    }
+
+    if (newNotifs.length > 0) {
+      setNotifications(prev => {
+        const merged = [...newNotifs, ...prev].sort((A, B) => B.createdAt.localeCompare(A.createdAt))
+        persistNotifications(merged)
+        return merged
+      })
+    }
+  }, [tasks, agentsState, selected])
+
+  // Mark notifications for a task as read when the thread is opened
+  useEffect(() => {
+    if (!selected) return
+    setNotifications(prev => {
+      const next = (prev || []).map(n => (n.taskId === selected ? { ...n, read: true } : n))
+      persistNotifications(next)
+      return next
+    })
+    setUnreadResults(prev => ({ ...(prev || {}), [selected]: false }))
+  }, [selected])
+
+  function handleNotificationClick(n: Notification) {
+    if (n.taskId) setSelected(n.taskId)
+    setNotifications(prev => {
+      const next = (prev || []).map(x => x.id === n.id ? { ...x, read: true } : x)
+      persistNotifications(next)
+      return next
+    })
+    if (n.taskId) setUnreadResults(prev => ({ ...(prev || {}), [n.taskId]: false }))
+  }
+
+
+  function computeResultSignature(r: any) {
+    if (!r) return ''
+    const status = r.status || ''
+    const summary = (typeof r.summary === 'string') ? r.summary : safeStringify(r.summary || '')
+    const updatedAt = r.updatedAt || r.createdAt || ''
+    const resultId = r.resultId || r.id || ''
+    const returnCode = (typeof r.returnCode === 'number' || typeof r.returnCode === 'string') ? String(r.returnCode) : ''
+    return `${status}|${summary}|${updatedAt}|${resultId}|${returnCode}`
+  }
+
+  function computeSignatureFromTask(t: any) {
+    if (!t) return ''
+    let r = null
+    if (Array.isArray(t.messages)) {
+      for (let i = t.messages.length - 1; i >= 0; i--) {
+        const m = t.messages[i]
+        if (m && m.author === 'result' && m.data) { r = m.data; break }
+        if (m && m.author === 'result' && (m.text || m.createdAt)) { r = { summary: m.text, updatedAt: m.createdAt }; break }
+      }
+    }
+    if (!r) {
+      if (t.openhandsResponse) r = { summary: t.openhandsResponse, updatedAt: t.updatedAt || '' }
+      else r = null
+    }
+    return computeResultSignature(r)
+  }
+
 
 
 
@@ -1758,12 +1961,62 @@ export default function App() {
     try {
       const data = await api.getTasks()
       setTasks(data)
+      // initialize lastSeen signatures for notification tracking
+      try {
+        const sigs: Record<string, string> = {}
+        for (const t of data) {
+          sigs[t.taskId] = computeSignatureFromTask(t)
+        }
+        lastSeenResultRef.current = sigs
+        setUnreadResults({})
+      } catch (e) {}
       if (!selected && data.length > 0) setSelected(data[0].taskId)
     } catch (e) {
       console.error(e)
     }
     setLoading(false)
   }
+
+  // Background poll for results across all tasks to surface unread badges
+  useEffect(() => {
+    let iv: any = null
+    let cancelled = false
+    async function pollAllResults() {
+      if (!tasks || tasks.length === 0) return
+      for (const t of tasks) {
+        try {
+          const res = await fetch(`${import.meta.env.BASE_URL}api/results/${encodeURIComponent(t.taskId)}`)
+          if (!res.ok) continue
+          const r = await res.json()
+          const sig = computeResultSignature(r)
+          const last = lastSeenResultRef.current[t.taskId] || ''
+          if (!last) { lastSeenResultRef.current[t.taskId] = sig; continue }
+          if (sig !== last) {
+            lastSeenResultRef.current[t.taskId] = sig
+            if (selected === t.taskId) {
+              // thread is open — mark read locally
+              setUnreadResults(prev => {
+                if (!prev[t.taskId]) return prev
+                const copy = { ...prev }
+                copy[t.taskId] = false
+                return copy
+              })
+            } else {
+              // mark as unread in inbox
+              setUnreadResults(prev => ({ ...prev, [t.taskId]: true }))
+            }
+          }
+        } catch (e) {
+          // ignore per-task error
+        }
+        if (cancelled) break
+      }
+    }
+    pollAllResults()
+    iv = setInterval(pollAllResults, 10000)
+    return () => { cancelled = true; if (iv) clearInterval(iv) }
+  }, [tasks, selected])
+
 
   async function saveTask(task: Task) {
     const data = await api.saveTask(task)
@@ -1855,6 +2108,27 @@ export default function App() {
       <div className="board">
         {isMobileApp ? (
           <div className="chat-home">
+            <div style={{ padding: '8px 12px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <h3 style={{ margin: 0 }}>🔔 Notifications</h3>
+                <div className="selected-badge" style={{ background: '#ef4444' }}>{(notifications || []).filter(n => !n.read).length || 0}</div>
+              </div>
+              <div style={{ maxHeight: 140, overflow: 'auto', marginTop: 8 }}>
+                {(notifications || []).length === 0 ? (
+                  <div className="muted">No notifications</div>
+                ) : (
+                  (notifications || []).slice(0, 5).map(n => (
+                    <div key={n.id} className={'notif-item' + (n.read ? '' : ' unread')} onClick={() => handleNotificationClick(n)} style={{ padding: 8, borderRadius: 6, border: '1px solid #f1f5f9', background: '#fff', marginBottom: 6 }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
+                        <div style={{ fontWeight: 700 }}>{n.title}</div>
+                        <div className="muted" style={{ fontSize: 12 }}>{timeAgo(n.createdAt)}</div>
+                      </div>
+                      <div className="muted" style={{ fontSize: 13, marginTop: 6 }}>{n.message}</div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
             <div className="threads-list">
               <div style={{ padding: '8px 12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <h3 style={{ margin: 0 }}>Active Tasks</h3>
@@ -1862,7 +2136,7 @@ export default function App() {
               </div>
               {tasks.filter((t) => t.status !== 'completed').map((t) => (
                 <div key={t.taskId} className={'thread-item' + (selected === t.taskId ? ' selected' : '')} onClick={() => setSelected(t.taskId)}>
-                  <TaskCard t={t} onClick={() => setSelected(t.taskId)} />
+                  <TaskCard t={t} onClick={() => setSelected(t.taskId)} hasNewResult={!!unreadResults[t.taskId]} />
                 </div>
               ))}
 
@@ -1872,7 +2146,7 @@ export default function App() {
 
               {tasks.filter((t) => t.status === 'completed').slice(0, 10).map((t) => (
                 <div key={t.taskId} onClick={() => setSelected(t.taskId)}>
-                  <TaskCard t={t} onClick={() => setSelected(t.taskId)} />
+                  <TaskCard t={t} onClick={() => setSelected(t.taskId)} hasNewResult={!!unreadResults[t.taskId]} />
                 </div>
               ))}
             </div>
@@ -1912,6 +2186,16 @@ export default function App() {
                   chatMode={true}
                   openTask={(id: string) => setSelected(id)}
                   agents={agentsState}
+                  onResultSeen={(taskId: string, signature: string) => {
+                    lastSeenResultRef.current = { ...lastSeenResultRef.current, [taskId]: signature }
+                    try { localStorage.setItem('taskboard-last-seen', JSON.stringify(lastSeenResultRef.current)) } catch (e) {}
+                    setUnreadResults((prev) => ({ ...(prev || {}), [taskId]: false }))
+                    setNotifications(prev => {
+                      const next = (prev || []).map(n => n.taskId === taskId ? { ...n, read: true } : n)
+                      persistNotifications(next)
+                      return next
+                    })
+                  }}
                 />
               ) : (
                 <div style={{ padding: 16 }}>Start a new task or select a thread</div>
@@ -1928,7 +2212,10 @@ export default function App() {
                     key={t.taskId}
                     onClick={() => setSelected(t.taskId)}
                   >
-                    <div className="card-title">{t.title}</div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <div className="card-title" style={{ flex: 1 }}>{t.title}</div>
+                      {unreadResults[t.taskId] ? <div className="badge-new">New</div> : null}
+                    </div>
                     <div className="card-sub">
                       <span className="card-status">{t.status}</span>
                       <span className="card-reviewer">{(t.reviewerSummary || '').split('\n')[0]}</span>
@@ -1945,7 +2232,10 @@ export default function App() {
                     key={t.taskId}
                     onClick={() => setSelected(t.taskId)}
                   >
-                    <div className="card-title">{t.title}</div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <div className="card-title" style={{ flex: 1 }}>{t.title}</div>
+                      {unreadResults[t.taskId] ? <div className="badge-new">New</div> : null}
+                    </div>
                     <div className="card-sub">
                       <span className="card-status">{t.status}</span>
                       <span className="card-reviewer">{(t.reviewerSummary || '').split('\n')[0]}</span>
@@ -1962,7 +2252,10 @@ export default function App() {
                     key={t.taskId}
                     onClick={() => setSelected(t.taskId)}
                   >
-                    <div className="card-title">{t.title}</div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <div className="card-title" style={{ flex: 1 }}>{t.title}</div>
+                      {unreadResults[t.taskId] ? <div className="badge-new">New</div> : null}
+                    </div>
                     <div className="card-sub">
                       <span className="card-status">{t.status}</span>
                       <span className="card-reviewer">{(t.reviewerSummary || '').split('\n')[0]}</span>
@@ -1990,12 +2283,40 @@ export default function App() {
                   chatMode={isChatView && isMobileApp}
                   openTask={(id: string) => setSelected(id)}
                   agents={agentsState}
+                  onResultSeen={(taskId: string, signature: string) => {
+                    lastSeenResultRef.current = { ...lastSeenResultRef.current, [taskId]: signature }
+                    try { localStorage.setItem('taskboard-last-seen', JSON.stringify(lastSeenResultRef.current)) } catch (e) {}
+                    setUnreadResults((prev) => ({ ...(prev || {}), [taskId]: false }))
+                    setNotifications(prev => {
+                      const next = (prev || []).map(n => n.taskId === taskId ? { ...n, read: true } : n)
+                      persistNotifications(next)
+                      return next
+                    })
+                  }}
                 />
               ) : (
                 <div>Select a task to view details</div>
               )}
             </div>
             <div className="sidebar">
+              <div className="sidebar-section">
+                <div className="section-header"><h3>🔔 Notifications <span className="muted" style={{ fontSize: 12 }}> {(notifications || []).filter(n => !n.read).length || 0} unread</span></h3></div>
+                <div className="section-list">
+                  {(notifications || []).length === 0 ? (
+                    <div className="muted">No notifications</div>
+                  ) : (
+                    (notifications || []).slice(0, 8).map(n => (
+                      <div key={n.id} className="card" style={{ padding: 8, cursor: 'pointer', borderLeft: n.read ? '4px solid transparent' : '4px solid #ef4444' }} onClick={() => handleNotificationClick(n)}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <div style={{ fontWeight: 700 }}>{n.title}</div>
+                          <div className="muted" style={{ fontSize: 12 }}>{timeAgo(n.createdAt)}</div>
+                        </div>
+                        <div className="muted" style={{ marginTop: 6, fontSize: 13 }}>{n.message}</div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
               <div className="sidebar-section">
                 <div className="section-header"><h3>Agent Capacity</h3></div>
                 <div className="section-list">

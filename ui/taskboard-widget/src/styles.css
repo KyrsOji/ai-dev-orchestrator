@@ -268,3 +268,13 @@ pre { white-space: pre-wrap; font-family: inherit; background: #fff; padding: 8p
   .recommend-card .small { width: 100%; }
 }
 
+
+/* Notification Center styles */
+.notif-item { padding: 8px; border-radius: 6px; border: 1px solid #f1f5f9; background: #fff; margin-bottom: 8px; cursor: pointer; }
+.notif-item.unread { border-left: 4px solid #ef4444; }
+.notif-count { display: inline-block; background: #ef4444; color: #fff; padding: 4px 8px; border-radius: 999px; font-weight: 700; font-size: 12px; }
+
+@media (max-width: 600px) {
+  .notif-item { padding: 10px; }
+}
+

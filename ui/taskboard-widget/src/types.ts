@@ -62,3 +62,16 @@ export interface AgentRecommendation {
   reasons: string[]
 }
 
+
+export type NotificationType = 'task_created' | 'reviewer_approved' | 'result_updated' | 'follow_up_created' | 'opinion_added' | 'agent_stale'
+
+export interface Notification {
+  id: string
+  taskId?: string
+  type: NotificationType
+  title: string
+  message: string
+  createdAt: string
+  read: boolean
+}
+
