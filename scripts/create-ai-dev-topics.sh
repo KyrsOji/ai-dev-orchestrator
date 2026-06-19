@@ -53,6 +53,8 @@ TOPICS=(
   "ai.dev.approval.required"
   "ai.dev.audit.log"
   "ai.dev.deadletter"
+  # Agent registry status topic
+  "ai.dev.agent.status"
 )
 
 # Append any additional task topics provided via AI_DEV_TASK_TOPICS (comma-separated)
