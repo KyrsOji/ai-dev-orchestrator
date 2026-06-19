@@ -2032,6 +2032,38 @@ export default function App() {
 
   const isStandalone = !(widgetInfo.connected && widgetInfo.capabilitiesGranted && (transportWidgetId || widgetInfo.widgetId));
 
+  // Agent Queue grouping logic
+  const runningStates = new Set(['running', 'submitted'])
+  const queuedStates = new Set(['pending_review', 'approved'])
+  const completedStates = new Set(['completed', 'dry_run_completed', 'executed', 'prepared'])
+  const [expandedAgents, setExpandedAgents] = useState<Record<string, boolean>>({})
+  function toggleAgentExpand(id: string) {
+    setExpandedAgents(prev => ({ ...(prev || {}), [id]: !prev?.[id] }))
+  }
+
+  const groups: Record<string, { agent: Agent | null; tasks: Task[]; runningCount: number; queuedCount: number; completedCount: number; otherCount: number }> = {}
+  for (const a of (agentsState || [])) {
+    groups[a.agentId] = { agent: a, tasks: [], runningCount: 0, queuedCount: 0, completedCount: 0, otherCount: 0 }
+  }
+  groups['__unassigned__'] = groups['__unassigned__'] || { agent: null, tasks: [], runningCount: 0, queuedCount: 0, completedCount: 0, otherCount: 0 }
+
+  for (const t of (tasks || [])) {
+    try {
+      const aid = (t && t.routing && (t.routing.selectedAgentId || t.routing.selectedAgentId)) || '__unassigned__'
+      if (!groups[aid]) groups[aid] = { agent: null, tasks: [], runningCount: 0, queuedCount: 0, completedCount: 0, otherCount: 0 }
+      groups[aid].tasks.push(t)
+      const s = (t && t.status) ? t.status : ''
+      if (runningStates.has(s)) groups[aid].runningCount++
+      else if (queuedStates.has(s)) groups[aid].queuedCount++
+      else if (completedStates.has(s)) groups[aid].completedCount++
+      else groups[aid].otherCount++
+    } catch (e) {}
+  }
+
+  const agentOrder = (agentsState || []).map(a => a.agentId).concat(['__unassigned__'])
+
+
+
 
   return (
     <div className="app">
@@ -2139,6 +2171,45 @@ export default function App() {
                   <TaskCard t={t} onClick={() => setSelected(t.taskId)} hasNewResult={!!unreadResults[t.taskId]} />
                 </div>
               ))}
+
+              <div className="panel" style={{ margin: '8px 12px' }}>
+                <h4 style={{ margin: 0 }}>Agent Queue</h4>
+                <div className="agent-queue">
+                  {agentOrder.map((aid) => {
+                    const g = groups[aid]; if (!g) return null
+                    const a = g.agent
+                    const label = a ? a.agentId : 'Unassigned'
+                    return (
+                      <div key={aid} className="agent-item" style={{ padding: 8, borderRadius: 6, border: '1px solid #f1f5f9', background: '#fff', marginTop: 8 }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <div style={{ fontWeight: 700 }}>{label}</div>
+                          <div style={{ fontSize: 14 }}>{a ? (a.isFresh ? '🟢' : '🔴') : ''}</div>
+                        </div>
+                        <div className="muted" style={{ fontSize: 12 }}>{a ? `${a.hostname} · ${(a.roles || []).join(', ')}` : ''}</div>
+                        <div style={{ display: 'flex', gap: 12, marginTop: 6, flexWrap: 'wrap' }}>
+                          <div>Running: {g.runningCount}</div>
+                          <div>Queued: {g.queuedCount}</div>
+                          <div>Completed: {g.completedCount}</div>
+                        </div>
+                        <div style={{ marginTop: 8 }}>
+                          <button className="small" onClick={() => toggleAgentExpand(aid)}>{expandedAgents[aid] ? 'Collapse' : 'Expand'}</button>
+                        </div>
+                        {expandedAgents[aid] ? (
+                          <div style={{ marginTop: 8 }}>
+                            {(g.tasks || []).slice(0, 50).map(t => (
+                              <div key={t.taskId} onClick={() => setSelected(t.taskId)} style={{ padding: '6px 0', cursor: 'pointer' }}>
+                                <div style={{ fontWeight: 600 }}>{t.taskId} {t.title ? `— ${t.title}` : ''}</div>
+                                <div className="muted">{t.status}</div>
+                              </div>
+                            ))}
+                          </div>
+                        ) : null}
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+
 
               <div style={{ padding: '8px 12px', marginTop: 8 }}>
                 <h3 style={{ margin: 0 }}>Recent Tasks</h3>
