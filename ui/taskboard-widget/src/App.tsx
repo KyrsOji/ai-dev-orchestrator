@@ -473,8 +473,13 @@ function TaskDetail({
             return next
           })
 
-          // persist result into task for visibility
-          const updated = { ...local, openhandsResponse: r.summary || local.openhandsResponse, messages: [...(local.messages || []), startedMsg, resultMsg, availableMsg] }
+          // persist result into task for visibility, and capture session/run metadata if present
+          const updated: any = { ...local, openhandsResponse: r.summary || local.openhandsResponse, messages: [...(local.messages || []), startedMsg, resultMsg, availableMsg] }
+          if (r && r.conversationId) updated.conversationId = r.conversationId
+          if (r && r.runDirectory) {
+            updated.context = updated.context || {}
+            updated.context.previousRunDirectory = r.runDirectory
+          }
           setLocal(updated)
           try { await onSave(updated) } catch (e) {}
 
@@ -588,6 +593,25 @@ function TaskDetail({
     const actionForSend = selectedActionObj ? { ...selectedActionObj, payload: Object.assign({}, selectedActionObj.payload || {}) } : null
     if (actionForSend) {
       actionForSend.payload.routing = actionForSend.payload.routing || local.routing || { selectedAgentId: AGENTS[0].id, selectedHostname: AGENTS[0].hostname, selectedRole: AGENTS[0].roles[0] }
+
+      // If this action appears to be a follow-up creation, inject session continuity metadata
+      try {
+        const actType = (selectedActionObj && selectedActionObj.type) ? String(selectedActionObj.type).toLowerCase() : ''
+        const isFollowUpAction = actType.startsWith('follow') || (actionForSend.payload && (actionForSend.payload.followUpTask || actionForSend.payload.createFollowUp || actionForSend.payload.followup || actionForSend.payload.isFollowUp))
+        if (isFollowUpAction) {
+          // parent/root identifiers
+          actionForSend.payload.parentTaskId = local.taskId
+          actionForSend.payload.rootTaskId = (local.rootTaskId && local.rootTaskId.length) ? local.rootTaskId : local.taskId
+          // inherit conversation id if available
+          if (local.conversationId) actionForSend.payload.conversationId = local.conversationId
+          // context carries previous task/run directory
+          actionForSend.payload.context = actionForSend.payload.context || {}
+          actionForSend.payload.context.previousTaskId = local.taskId
+          if (local.context && local.context.previousRunDirectory) actionForSend.payload.context.previousRunDirectory = local.context.previousRunDirectory
+        }
+      } catch (e) {
+        // best-effort only; do not block sending
+      }
     }
 
     // If running in Standalone Mode, send explicit decisions to the standalone API
@@ -1041,6 +1065,11 @@ function TaskDetail({
           <div>Parent URL: {widgetInfo.parentUrl || '(none)'}</div>
           <div>Room ID: {widgetInfo.roomId || '(none)'}</div>
           <div>Capabilities Granted: {widgetInfo.capabilitiesGranted ? 'yes' : 'no'}</div>
+          <div style={{ marginTop: 6 }}><strong>Session / Runner</strong></div>
+          <div>Root Task: {local.rootTaskId || '(none)'}</div>
+          <div>Parent Task: {(local as any).parentTaskId || '(none)'}</div>
+          <div>OpenHands Conversation: {(local as any).conversationId || '(none)'}</div>
+          <div>Previous Run Directory: {local.context && (local.context as any).previousRunDirectory ? (local.context as any).previousRunDirectory : '(none)'}</div>
         </div>
       ) : (
         <div style={{ fontSize: 12, color: '#666', marginBottom: 8 }}>
@@ -1572,6 +1601,8 @@ export default function App() {
       proposedActions: [],
       selectedAction: null,
       notes: '',
+      // session continuity: new root tasks default rootTaskId to their own id
+      rootTaskId: id,
       routing: { selectedAgentId: defaultAgent.id, selectedHostname: defaultAgent.hostname, selectedRole: defaultAgent.roles[0] },
       updatedAt: new Date().toISOString(),
       messages: [{ id: uuid('msg-'), author: 'system', text: 'New task created', createdAt: new Date().toISOString() }],

@@ -32,6 +32,14 @@ export interface Task {
     selectedHostname?: string
     selectedRole?: string
   }
+  // OpenHands session continuity fields
+  conversationId?: string
+  rootTaskId?: string
+  parentTaskId?: string
+  context?: {
+    previousRunDirectory?: string
+    previousTaskId?: string
+  }
   // last update time
   updatedAt?: string
   // Chat/thread messages (optional)

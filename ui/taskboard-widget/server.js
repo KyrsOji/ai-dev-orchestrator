@@ -353,7 +353,37 @@ function buildResultForTask(id) {
       updatedAt = new Date(mx).toISOString();
     }
 
-    return {
+    // Attempt to detect an OpenHands conversation id from available artifacts
+    let conversationId = null;
+    let detectedConversationIdSource = null;
+    try {
+      const re = /Initialized conversation\s+([a-f0-9]{16,64})/i;
+      const candidates = [];
+      if (executionReport) {
+        if (typeof executionReport.summary === 'string') candidates.push({ src: 'execution-report.json:summary', text: executionReport.summary });
+        if (typeof executionReport.stdout === 'string') candidates.push({ src: 'execution-report.json:stdout', text: executionReport.stdout });
+        if (typeof executionReport.stderr === 'string') candidates.push({ src: 'execution-report.json:stderr', text: executionReport.stderr });
+        try { candidates.push({ src: 'execution-report.json', text: JSON.stringify(executionReport) }); } catch (e) {}
+      }
+      if (taskObj) {
+        try { candidates.push({ src: 'task.json', text: JSON.stringify(taskObj) }); } catch (e) {}
+      }
+      if (taskMarkdown) candidates.push({ src: 'task.md', text: taskMarkdown });
+
+      for (const c of candidates) {
+        if (!c || !c.text) continue;
+        const m = re.exec(c.text);
+        if (m && m[1]) {
+          conversationId = m[1];
+          detectedConversationIdSource = c.src || 'execution-report.json';
+          break;
+        }
+      }
+    } catch (e) {
+      // ignore detection errors
+    }
+
+    const out = {
       taskId: id,
       found: true,
       runDirectory: runDir,
@@ -364,6 +394,13 @@ function buildResultForTask(id) {
       summary,
       updatedAt
     };
+
+    if (conversationId) {
+      out.conversationId = conversationId;
+      out.detectedConversationIdSource = detectedConversationIdSource;
+    }
+
+    return out;
   } catch (e) {
     console.error('results lookup error', e && e.message ? e.message : e);
     const all = readResults();
