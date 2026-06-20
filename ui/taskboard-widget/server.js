@@ -273,7 +273,7 @@ app.post('/taskboard/api/task/save', (req, res) => {
 
 
 // Simple local results store (non-production) - map taskId -> result
-const RESULTS_FILE = '/tmp/taskboard-results.json';
+const RESULTS_FILE = process.env.RESULTS_FILE || '/var/lib/ai-dev-runner/taskboard-results.json';
 function readResults() {
   try {
     if (!fs.existsSync(RESULTS_FILE)) return {};
