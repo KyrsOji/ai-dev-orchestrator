@@ -40,10 +40,34 @@ def execute_task(run_dir: str, task: Dict[str, Any]) -> Dict[str, Any]:
         sandbox_parts = shlex.split(sandbox)
         cmd = sandbox_parts + [str(run_path), "--"] + cmd
 
+    # Prepare stdin input for OpenHands. Prefer task.instructions, then task.md, then description/title.
+    input_text = ""
+    try:
+        instructions_val = task.get("instructions") or task.get("instruction")
+        if instructions_val:
+            # Send only the instructions field when available (minimal, explicit payload).
+            input_text = str(instructions_val)
+        elif task_md.exists():
+            # Fall back to the human-readable markdown summary if no explicit instructions field.
+            input_text = task_md.read_text(encoding="utf-8")
+        else:
+            parts = []
+            title = task.get("title")
+            if title:
+                parts.append(f"# {title}")
+            description = task.get("description")
+            if description:
+                parts.append(str(description))
+            input_text = "\n\n".join(parts).strip()
+    except Exception:
+        input_text = ""
+
+    # Run the command, feeding the task content into stdin so interactive prompts receive it.
     proc = subprocess.run(
         cmd,
         cwd=str(run_path),
         text=True,
+        input=input_text,
         capture_output=True,
         timeout=timeout,
         check=False,
