@@ -1,7 +1,8 @@
 import { Agent, AgentRecommendation } from './types'
 
 // Pure recommendation function — scores agents for a given role
-export function recommendAgent(selectedRole: string, agents: Agent[]): AgentRecommendation {
+// Extended with session-affinity when taskContext.conversationId is present
+export function recommendAgent(selectedRole: string, agents: Agent[], taskContext?: { conversationId?: string; rootTaskId?: string; parentTaskId?: string; selectedAgentId?: string; selectedHostname?: string }): AgentRecommendation {
   if (!agents || agents.length === 0) {
     return { agentId: '', hostname: '', score: -Infinity, reasons: ['no agents available'] }
   }
@@ -18,12 +19,34 @@ export function recommendAgent(selectedRole: string, agents: Agent[]): AgentReco
   const minDisk = diskVals.length ? Math.min(...diskVals) : 0
   const maxDisk = diskVals.length ? Math.max(...diskVals) : 0
 
+  const hasConversation = taskContext && !!taskContext.conversationId
+  const convAgentId = hasConversation ? taskContext!.selectedAgentId : undefined
+  const convHostname = hasConversation ? taskContext!.selectedHostname : undefined
+
   let best: AgentRecommendation | null = null
   let bestScore = -Infinity
 
   for (const a of agents) {
     let score = 0
     const reasons: string[] = []
+
+    // Session affinity: if this task is part of an existing OpenHands conversation, prefer the same agent/host
+    if (hasConversation) {
+      // indicate conversation exists (reason shown for candidates)
+      reasons.push('Existing OpenHands conversation')
+
+      if (convAgentId && (a.agentId === convAgentId || a.id === convAgentId)) {
+        score += 200
+        reasons.push('Same agent as conversation')
+      } else if (convHostname && a.hostname && a.hostname === convHostname) {
+        score += 100
+        reasons.push('Same host as conversation')
+      } else {
+        // penalize different agent to prefer affinity
+        score -= 50
+        reasons.push('Different agent (load balancing)')
+      }
+    }
 
     // Role match / missing role (strong penalty)
     if (Array.isArray(a.roles) && a.roles.includes(selectedRole)) {

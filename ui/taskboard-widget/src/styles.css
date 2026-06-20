@@ -302,3 +302,9 @@ pre { white-space: pre-wrap; font-family: inherit; background: #fff; padding: 8p
   .session-chain .session-node { margin-left: 0 !important; }
 }
 
+
+/* Session affinity visuals */
+.affinity-badge { display: inline-block; padding: 4px 8px; border-radius: 999px; font-size: 12px; font-weight: 700; color: #fff; background: #16a34a; }
+.warning-card { word-break: break-word; max-width: 100%; border: 1px solid #fde68a; background: #fff7ed; padding: 8px; border-radius: 6px; }
+
+

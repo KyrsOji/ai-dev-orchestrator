@@ -193,7 +193,14 @@ function TaskDetail({
 
   // Compute recommendation for the currently selected role (pure, re-run each render)
   const selectedRoleForRec = (local && local.routing && (local.routing.selectedRole || local.routing.role)) || 'general'
-  const recommendation = recommendAgent(selectedRoleForRec, agents || [])
+  const taskContext = {
+    conversationId: (local && local.conversationId) || undefined,
+    rootTaskId: (local && local.rootTaskId) || undefined,
+    parentTaskId: (local && local.parentTaskId) || undefined,
+    selectedAgentId: (local && local.routing && local.routing.selectedAgentId) || undefined,
+    selectedHostname: (local && local.routing && local.routing.selectedHostname) || undefined,
+  }
+  const recommendation = recommendAgent(selectedRoleForRec, agents || [], taskContext)
   const recommendationApplied = !!(recommendation && local && local.routing && local.routing.selectedAgentId === recommendation.agentId)
 
   // Helper: build session chain data and render UI
@@ -998,6 +1005,13 @@ function TaskDetail({
                 <div style={{ fontSize: 13 }}>{recommendation.score}</div>
               </div>
               <div className="muted" style={{ fontSize: 12 }}>{recommendation.hostname}</div>
+
+              {local && local.conversationId ? (
+                <div style={{ marginTop: 6 }}>
+                  <div className="mode-badge mode-matrix" style={{ display: 'inline-block', padding: '4px 8px', borderRadius: 999, fontSize: 12, fontWeight: 700, background: '#16a34a', color: '#fff' }}>Session Affinity Active</div>
+                </div>
+              ) : null}
+
               <div style={{ marginTop: 6 }}>
                 {recommendation.reasons.map((r, i) => <div key={i} style={{ fontSize: 13, lineHeight: '1.25' }}>{'\u2713'} {r}</div>)}
               </div>
@@ -1015,6 +1029,25 @@ function TaskDetail({
               </div>
             </div>
           ) : null}
+
+          {/* If there is an OpenHands conversation associated with this task, and the recommendation differs from the conversation's agent, show a warning */}
+          {local && local.conversationId ? (() => {
+            const convTask = Array.isArray(tasks) ? tasks.find(t => t.conversationId && t.conversationId === local.conversationId && t.routing && t.routing.selectedAgentId) : null
+            const convAgentId = (local && local.routing && local.routing.selectedAgentId) || (convTask && convTask.routing && convTask.routing.selectedAgentId)
+            if (convAgentId && recommendation && recommendation.agentId && convAgentId !== recommendation.agentId) {
+              return (
+                <div style={{ marginTop: 8, padding: 8, borderRadius: 6, border: '1px solid #fde68a', background: '#fff7ed', maxWidth: 420 }}>
+                  <div style={{ fontWeight: 700, marginBottom: 6 }}>Conversation vs Recommendation</div>
+                  <div className="muted">
+                    <div>Conversation is associated with: <strong>{convAgentId}</strong></div>
+                    <div>Recommended: <strong>{recommendation.agentId}</strong></div>
+                    <div>Reason: load balancing</div>
+                  </div>
+                </div>
+              )
+            }
+            return null
+          })() : null}
         </div>
 
         <div className="messages" ref={messagesRef} style={{ overflowY: 'auto', maxHeight: '60vh', padding: 12 }}>
