@@ -40,27 +40,70 @@ def execute_task(run_dir: str, task: Dict[str, Any]) -> Dict[str, Any]:
         sandbox_parts = shlex.split(sandbox)
         cmd = sandbox_parts + [str(run_path), "--"] + cmd
 
-    # Prepare stdin input for OpenHands. Prefer task.instructions, then task.md, then description/title.
+    # Prepare stdin input for OpenHands. Priority (first available):
+    # 1. task.instructions
+    # 2. task.instruction
+    # 3. task.proposedAction.description
+    # 4. selected proposedActions description (task.proposedActions + task.selectedAction)
+    # 5. task.description
+    # 6. task.md
+    # 7. title fallback
     input_text = ""
+    input_source = None
     try:
+        # 1 & 2: explicit instructions fields
         instructions_val = task.get("instructions") or task.get("instruction")
         if instructions_val:
-            # Send only the instructions field when available (minimal, explicit payload).
             input_text = str(instructions_val)
-        elif task_md.exists():
-            # Fall back to the human-readable markdown summary if no explicit instructions field.
-            input_text = task_md.read_text(encoding="utf-8")
+            input_source = "instructions" if task.get("instructions") else "instruction"
         else:
-            parts = []
-            title = task.get("title")
-            if title:
-                parts.append(f"# {title}")
-            description = task.get("description")
-            if description:
-                parts.append(str(description))
-            input_text = "\n\n".join(parts).strip()
+            # 3: single proposedAction object
+            pa = task.get("proposedAction")
+            if isinstance(pa, dict) and pa.get("description"):
+                input_text = str(pa.get("description"))
+                input_source = "proposedAction.description"
+            else:
+                # 4: proposedActions list with optional selectedAction
+                pas = task.get("proposedActions") or task.get("proposed_actions")
+                selected_id = task.get("selectedAction") or task.get("selected_action")
+                selected_desc = None
+                if isinstance(pas, list) and pas:
+                    if selected_id:
+                        for a in pas:
+                            try:
+                                if a and (a.get("id") == selected_id or str(a.get("id")) == str(selected_id)):
+                                    selected_desc = a.get("description")
+                                    break
+                            except Exception:
+                                continue
+                    if not selected_desc:
+                        first = pas[0]
+                        if first and isinstance(first, dict) and first.get("description"):
+                            selected_desc = first.get("description")
+                if selected_desc:
+                    input_text = str(selected_desc)
+                    input_source = "proposedActions.selected" if selected_id else "proposedActions.first"
+                else:
+                    # 5: task.description
+                    description = task.get("description")
+                    if description:
+                        input_text = str(description)
+                        input_source = "description"
+                    elif task_md.exists():
+                        # 6: markdown fallback
+                        input_text = task_md.read_text(encoding="utf-8")
+                        input_source = "task.md"
+                    else:
+                        # 7: title fallback
+                        parts = []
+                        title = task.get("title")
+                        if title:
+                            parts.append(f"# {title}")
+                        input_text = "\n\n".join(parts).strip()
+                        input_source = "title" if title else "none"
     except Exception:
         input_text = ""
+        input_source = None
 
     # Run the command, feeding the task content into stdin so interactive prompts receive it.
     proc = subprocess.run(
@@ -81,6 +124,9 @@ def execute_task(run_dir: str, task: Dict[str, Any]) -> Dict[str, Any]:
         "runDirectory": str(run_path),
         "stdout": proc.stdout[-20000:],
         "stderr": proc.stderr[-20000:],
+        # Metadata about which field was used for stdin (no secrets)
+        "inputSource": input_source,
+        "inputLength": len(input_text) if input_text is not None else 0,
         "createdAt": datetime.now(timezone.utc).isoformat(),
     }
     report_path.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n")
