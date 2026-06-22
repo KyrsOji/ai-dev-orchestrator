@@ -9,6 +9,32 @@ from typing import Any, Dict
 from openhands_cli.tui.settings.store import AgentStore
 from openhands.sdk.conversation.conversation import Conversation
 
+def _event_type_counts(events: list[object]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for event in events:
+        name = type(event).__name__
+        counts[name] = counts.get(name, 0) + 1
+    return counts
+
+
+def _extract_response_preview(events: list[object], limit: int = 500) -> str:
+    for event in reversed(events):
+        if type(event).__name__ != "MessageEvent":
+            continue
+        if getattr(event, "source", None) != "agent":
+            continue
+        msg = getattr(event, "llm_message", None)
+        content = getattr(msg, "content", None) or []
+        parts = []
+        for item in content:
+            text = getattr(item, "text", None)
+            if text:
+                parts.append(str(text))
+        preview = "\n".join(parts).strip()
+        if preview:
+            return preview[:limit]
+    return ""
+
 
 def execute_task(run_dir: str, task: Dict[str, Any]) -> Dict[str, Any]:
     """Execute a task using the OpenHands SDK (minimal, POC-style).
@@ -139,6 +165,8 @@ def execute_task(run_dir: str, task: Dict[str, Any]) -> Dict[str, Any]:
         "conversationId": str(getattr(conversation, "id", "")),
         "executionStatus": str(getattr(conversation.state, "execution_status", "")),
         "eventsCount": len(getattr(conversation.state, "events", [])),
+        "eventTypeCounts": _event_type_counts(list(getattr(conversation.state, "events", []))),
+        "responsePreview": _extract_response_preview(list(getattr(conversation.state, "events", []))),
         "returnCode": return_code,
         "summary": f"SDK runner completed with status: {status}",
         "errorType": error_type,
