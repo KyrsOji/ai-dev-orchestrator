@@ -140,6 +140,7 @@ def execute_task(run_dir: str, task: Dict[str, Any]) -> Dict[str, Any]:
         "executionStatus": str(getattr(conversation.state, "execution_status", "")),
         "eventsCount": len(getattr(conversation.state, "events", [])),
         "returnCode": return_code,
+        "summary": f"SDK runner completed with status: {status}",
         "errorType": error_type,
         "errorMessage": error_message,
         "inputSource": input_source,
