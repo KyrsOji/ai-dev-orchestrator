@@ -255,7 +255,14 @@ def process_task(task: Dict[str, Any], publisher: Optional[Callable[[Dict[str, A
                 logging.error("Execution guard blocked execution: %s", reason)
                 result_msg = build_result_message(task, run_dir, status="failed", summary=f"Execution blocked by guard: {reason}")
             else:
-                exec_meta = openhands_executor.execute_task(run_dir, task)
+                executor_type = os.environ.get("OPENHANDS_EXECUTOR", "cli").strip().lower()
+                if executor_type == "sdk":
+                    from . import openhands_sdk_executor
+                    logging.info("OpenHands executor adapter: sdk")
+                    exec_meta = openhands_sdk_executor.execute_task(run_dir, task)
+                else:
+                    logging.info("OpenHands executor adapter: cli")
+                    exec_meta = openhands_executor.execute_task(run_dir, task)
                 exec_status = exec_meta.get("status")
                 if exec_status in ("completed", "executed"):
                     status = "executed"
