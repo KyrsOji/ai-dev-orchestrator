@@ -277,6 +277,13 @@ def process_task(task: Dict[str, Any], publisher: Optional[Callable[[Dict[str, A
             result_msg = build_result_message(task, run_dir, status="dry_run_completed")
 
         # Publish result
+        # Defensive: if we're in execute mode, do not publish an intermediate dry_run_completed message.
+        status = result_msg.get("status")
+        if execution_mode == "execute" and status == "dry_run_completed":
+            logging.warning("Skipping intermediate dry_run_completed publish in execute mode for task %s", task_id)
+            # Treat as processed but not published
+            return {"processed": True, "published": False, "pub_meta": {"reason": "skipped_intermediate_dry_run"}, "result_id": result_msg.get("resultId")}
+
         try:
             success, pub_meta = publisher(result_msg, topic=RESULT_TOPIC)
         except TypeError:
