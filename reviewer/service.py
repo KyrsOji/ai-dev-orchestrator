@@ -132,6 +132,26 @@ class Reviewer:
         review = self.classify(result)
         logger.info("Review for %s: %s (%s)", review.taskId, review.classification, review.reason)
 
+        # Attempt to generate an automatic follow-up suggestion (log-only).
+        try:
+            # Use status from the result (runner-provided). Accept common status keys.
+            status_val = (result.get("status") or result.get("executionStatus") or "").lower()
+        except Exception:
+            status_val = ""
+        # Only attempt generation for executed/completed/failed-like statuses and when we have a source
+        if status_val in ("executed", "completed", "failed", "error", "timeout") and (result.get("responsePreview") or result.get("summary")):
+            try:
+                # Import placement: module-level import avoided to keep behavior predictable in tests
+                from reviewer import followup_generator
+
+                suggestion = followup_generator.generate_followup(result)
+                if suggestion:
+                    import json as _json
+
+                    logger.info("Auto-followup suggestion generated: %s", _json.dumps(suggestion, ensure_ascii=False))
+            except Exception:
+                logger.exception("Failed to generate follow-up suggestion for task %s", review.taskId)
+
         # Decide publishes based on classification
         if review.classification in ("requires_human_approval", "unsafe"):
             payload = {
