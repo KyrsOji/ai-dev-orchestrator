@@ -195,6 +195,52 @@ def _shutdown(signum: int, frame: object) -> None:
     global _running
     logging.info("Shutdown signal received: %s", signum)
     _running = False
+    # Signal to kafka_client that we're shutting down so it won't restart consumers
+    try:
+        os.environ.setdefault("RUNNER_SHUTTING_DOWN", "1")
+    except Exception:
+        pass
+    # Attempt to terminate any kafka-console-consumer subprocesses that are children
+    try:
+        mypid = os.getpid()
+        for entry in os.listdir("/proc"):
+            if not entry.isdigit():
+                continue
+            child_pid = int(entry)
+            try:
+                with open(f"/proc/{child_pid}/status", "r", encoding="utf-8") as f:
+                    status = f.read()
+            except Exception:
+                continue
+            if f"PPid:\t{mypid}" not in status:
+                continue
+            # Read the child's cmdline to decide if it's a kafka consumer process
+            try:
+                with open(f"/proc/{child_pid}/cmdline", "rb") as f:
+                    cmdline = f.read().replace(b"\x00", b" ").decode("utf-8", "replace").strip()
+            except Exception:
+                cmdline = ""
+            if not cmdline:
+                continue
+            if any(token in cmdline for token in ("kafka-console-consumer", "kafka.tools.ConsoleConsumer", "ConsoleConsumer", "kafka-console-producer")):
+                logging.info("Terminating child consumer pid=%s cmd=%s", child_pid, cmdline[:200])
+                try:
+                    os.kill(child_pid, signal.SIGTERM)
+                except Exception:
+                    logging.exception("Failed to SIGTERM child %s", child_pid)
+                # Wait briefly for child to exit, then escalate
+                for _ in range(5):
+                    time.sleep(1)
+                    if not os.path.exists(f"/proc/{child_pid}"):
+                        break
+                else:
+                    logging.warning("Child %s did not exit; sending SIGKILL", child_pid)
+                    try:
+                        os.kill(child_pid, signal.SIGKILL)
+                    except Exception:
+                        logging.exception("Failed to SIGKILL child %s", child_pid)
+    except Exception:
+        logging.exception("Error while terminating child processes")
 
 
 
