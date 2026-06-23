@@ -120,15 +120,25 @@ class MatrixBridge:
             self.kafka = KafkaClient(dry_run=dry_run)
 
     def post_task_summary(self, task: Dict[str, Any]) -> None:
-        summary = f"Task {task.get('taskId')} - {task.get('title', '')}"
+        # Determine display identifier: prefer taskId, then suggestionId, then parentTaskId
+        display_id = task.get("taskId") or task.get("suggestionId") or task.get("parentTaskId") or "unknown"
+        summary = f"Task {display_id} - {task.get('title', '')}"
         # Log a short summary, do not print secrets
-        logger.info("Posting task summary for task=%s to matrix room=%s", task.get("taskId"), self.matrix_room)
+        logger.info("Posting task summary for task=%s display_id=%s to matrix room=%s", task.get("taskId"), display_id, self.matrix_room)
         self.matrix.post_message(summary)
 
     def post_approval_request(self, task: Dict[str, Any]) -> None:
+        # Compute display id for compatibility and traceability
+        display_id = task.get("taskId") or task.get("suggestionId") or task.get("parentTaskId") or "unknown"
+        # Build metadata to include in the matrix message body
+        metadata = dict(task.get("metadata", {}) or {})
+        for k in ("suggestionId", "parentTaskId", "conversationId", "source"):
+            v = task.get(k)
+            if v is not None:
+                metadata[k] = v
         body = (
-            f"Approval request for task {task.get('taskId')}: {task.get('title', '')} "
-            f"metadata={task.get('metadata', {})}\n\n"
+            f"Approval request for task {display_id}: {task.get('title', '')} "
+            f"metadata={json.dumps(metadata, ensure_ascii=False)}\n\n"
             "Quick mobile approval:\n"
             "Type:\n"
             "a = approve latest pending request\n"
@@ -137,7 +147,7 @@ class MatrixBridge:
             "a TASK_ID\n"
             "d TASK_ID"
         )
-        logger.info("Posting approval request task=%s to matrix room=%s", task.get("taskId"), self.matrix_room)
+        logger.info("Posting approval request task=%s display_id=%s to matrix room=%s", task.get("taskId"), display_id, self.matrix_room)
         try:
             success, parsed, meta = self.matrix.post_message(body)
         except Exception:
@@ -150,20 +160,21 @@ class MatrixBridge:
             event_id = parsed.get("event_id")
             if event_id:
                 try:
-                    self._approval_event_to_task[event_id] = task.get("taskId")
-                    self._task_to_approval_event[task.get("taskId")] = event_id
-                    logger.info("Stored approval mapping event=%s -> task=%s", (event_id[-8:] if isinstance(event_id, str) else event_id), task.get("taskId"))
+                    # Map approval event to the display id (preserve real taskId if present)
+                    self._approval_event_to_task[event_id] = display_id
+                    self._task_to_approval_event[display_id] = event_id
+                    logger.info("Stored approval mapping event=%s -> task=%s", (event_id[-8:] if isinstance(event_id, str) else event_id), display_id)
                 except Exception:
                     logger.exception("Failed to store approval event mapping")
         # Record pending approval for room-level shortcuts
         try:
-            entry = {"taskId": task.get("taskId"), "timestamp": time.time(), "event_id": event_id}
+            entry = {"taskId": display_id, "timestamp": time.time(), "event_id": event_id}
             pending = self._pending_approvals.get(self.matrix_room)
             if pending is None:
                 self._pending_approvals[self.matrix_room] = [entry]
             else:
                 pending.append(entry)
-            logger.info("Added pending approval for task=%s room=%s pendingCount=%d", task.get("taskId"), self.matrix_room, len(self._pending_approvals.get(self.matrix_room, [])))
+            logger.info("Added pending approval for task=%s room=%s pendingCount=%d", display_id, self.matrix_room, len(self._pending_approvals.get(self.matrix_room, [])))
         except Exception:
             logger.exception("Failed to record pending approval in memory")
 
