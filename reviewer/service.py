@@ -149,6 +149,13 @@ class Reviewer:
                     import json as _json
 
                     logger.info("Auto-followup suggestion generated: %s", _json.dumps(suggestion, ensure_ascii=False))
+                    try:
+                        from reviewer import followup_store
+
+                        stored = followup_store.append_suggestion(suggestion)
+                        logger.info("Auto-followup suggestion appended to store: %s", _json.dumps(stored, ensure_ascii=False))
+                    except Exception:
+                        logger.warning("Failed to write follow-up suggestion to store for task %s", review.taskId)
             except Exception:
                 logger.exception("Failed to generate follow-up suggestion for task %s", review.taskId)
 
