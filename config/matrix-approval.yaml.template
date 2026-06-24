@@ -11,8 +11,8 @@ matrix:
 # Kafka
 kafka:
   bootstrap_servers: ["kafka.example.org:9092"]
-  consume_topic: "ai.dev.approval.request"
-  publish_topic: "ai.dev.approval.response"
+  consume_topic: "ai.dev.approval.required"
+  publish_topic: "ai.dev.review.out"
 
 # Bridge behaviour
 bridge:

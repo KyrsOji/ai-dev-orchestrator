@@ -5,7 +5,7 @@ set -euo pipefail
 BOOTSTRAP="${KAFKA_BOOTSTRAP:-localhost:9092}"
 RESULT_TOPIC="ai.dev.result.out"
 TASK_TOPIC="ai.dev.task.ofbiz"
-APPROVAL_TOPIC="ai.dev.approval.request"
+APPROVAL_TOPIC="ai.dev.approval.required"
 TIMEOUT=20
 
 # Sample messages
@@ -146,7 +146,7 @@ else
   fi
 fi
 
-# Test 2: secrets -> expect ai.dev.approval.request
+# Test 2: secrets -> expect ai.dev.approval.required
 echo "[test] secrets -> expect publish on ${APPROVAL_TOPIC}"
 if [ -n "$PRODUCER_CMD" ]; then
   publish_via_cli "$RESULT_TOPIC" "$SECRETS_MSG" || { echo "publish failed" >&2; exit 3; }
