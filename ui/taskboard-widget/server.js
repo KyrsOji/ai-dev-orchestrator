@@ -512,6 +512,67 @@ app.get('/api/agents', (req, res) => {
 })
 
 // Duplicate endpoint under /taskboard for app BASE_URL compatibility
+
+
+function readJsonlFile(filePath) {
+  try {
+    if (!filePath || !fs.existsSync(filePath)) return [];
+    const raw = fs.readFileSync(filePath, 'utf8');
+    return raw
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .map((line) => {
+        try { return JSON.parse(line); } catch (_e) { return null; }
+      })
+      .filter(Boolean);
+  } catch (_e) {
+    return [];
+  }
+}
+
+function buildFollowupsResponse() {
+  const suggestionsFile = process.env.FOLLOWUP_SUGGESTIONS_FILE || '/var/lib/ai-dev-runner/followup_suggestions.jsonl';
+  const decisionsFile = process.env.FOLLOWUP_DECISIONS_FILE || '/var/lib/ai-dev-runner/followup_decisions.jsonl';
+  const publishedFile = process.env.FOLLOWUP_PUBLISHED_FILE || '/var/lib/ai-dev-runner/followup_published.jsonl';
+
+  const suggestions = readJsonlFile(suggestionsFile);
+  const decisions = readJsonlFile(decisionsFile);
+  const published = readJsonlFile(publishedFile);
+
+  const decisionById = {};
+  for (const d of decisions) {
+    if (d && d.suggestionId) decisionById[d.suggestionId] = d.decision || 'pending';
+  }
+
+  const publishedIds = new Set(
+    published
+      .filter((p) => p && p.suggestionId)
+      .map((p) => p.suggestionId)
+  );
+
+  return suggestions
+    .slice()
+    .reverse()
+    .map((s) => ({
+      suggestionId: s.suggestionId || null,
+      parentTaskId: s.parentTaskId || null,
+      conversationId: s.conversationId || null,
+      title: s.title || '',
+      description: s.description || '',
+      reason: s.reason || '',
+      source: s.source || '',
+      generatedAt: s.generatedAt || null,
+      decision: s.suggestionId && decisionById[s.suggestionId] ? decisionById[s.suggestionId] : 'pending',
+      published: !!(s.suggestionId && publishedIds.has(s.suggestionId)),
+    }));
+}
+
+app.get('/taskboard/api/followups', (req, res) => {
+  res.json(buildFollowupsResponse());
+});
+
+
 app.get('/taskboard/api/agents', (req, res) => {
   const registryPath = process.env.AGENT_REGISTRY_STORAGE || '/tmp/ai-dev-agent-registry.json'
   try {
