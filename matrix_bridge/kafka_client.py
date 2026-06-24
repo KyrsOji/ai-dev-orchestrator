@@ -192,6 +192,13 @@ class KafkaClient:
                             proc.kill()
                         except Exception:
                             pass
+                    # If the runner is shutting down, do not restart the consumer loop
+                    try:
+                        if os.environ.get("RUNNER_SHUTTING_DOWN") == "1":
+                            logger.info("Shutdown requested; not restarting kafka-console-consumer")
+                            return
+                    except Exception:
+                        pass
                     time.sleep(backoff)
                     backoff = min(30, backoff * 2)
                     continue

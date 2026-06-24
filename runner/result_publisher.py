@@ -3,7 +3,40 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+from pathlib import Path
 from typing import Any, Dict, Tuple
+
+
+def _enrich_with_sdk_metadata(result: Dict[str, Any]) -> Dict[str, Any]:
+    """If an execution-report.json exists in the runDirectory, merge
+    selected SDK metadata into the published result while preserving
+    backward compatibility."""
+    enriched = dict(result)  # shallow copy
+    run_dir = enriched.get("runDirectory") or enriched.get("run_directory")
+
+    if not run_dir:
+        return enriched
+
+    try:
+        report_path = Path(run_dir) / "execution-report.json"
+        if report_path.exists():
+            with report_path.open("r", encoding="utf-8") as fh:
+                report = json.load(fh)
+            # Add required SDK fields into the published result
+            for key in (
+                "conversationId",
+                "responsePreview",
+                "executionStatus",
+                "eventTypeCounts",
+                "returnCode",
+            ):
+                if key in report:
+                    enriched[key] = report[key]
+    except Exception:
+        # Best-effort enrichment: do not block publishing on failures
+        pass
+
+    return enriched
 
 
 def publish_result(result: Dict[str, Any], topic: str | None = None) -> Tuple[bool, Dict[str, Any]]:
@@ -22,7 +55,10 @@ def publish_result(result: Dict[str, Any], topic: str | None = None) -> Tuple[bo
     if config:
         cmd.extend(["--producer.config", config])
 
-    payload = json.dumps(result, sort_keys=True) + "\n"
+    # Enrich result payload with SDK metadata when available
+    enriched = _enrich_with_sdk_metadata(result)
+
+    payload = json.dumps(enriched, sort_keys=True) + "\n"
 
     try:
         proc = subprocess.run(

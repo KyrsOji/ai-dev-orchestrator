@@ -195,6 +195,52 @@ def _shutdown(signum: int, frame: object) -> None:
     global _running
     logging.info("Shutdown signal received: %s", signum)
     _running = False
+    # Signal to kafka_client that we're shutting down so it won't restart consumers
+    try:
+        os.environ.setdefault("RUNNER_SHUTTING_DOWN", "1")
+    except Exception:
+        pass
+    # Attempt to terminate any kafka-console-consumer subprocesses that are children
+    try:
+        mypid = os.getpid()
+        for entry in os.listdir("/proc"):
+            if not entry.isdigit():
+                continue
+            child_pid = int(entry)
+            try:
+                with open(f"/proc/{child_pid}/status", "r", encoding="utf-8") as f:
+                    status = f.read()
+            except Exception:
+                continue
+            if f"PPid:\t{mypid}" not in status:
+                continue
+            # Read the child's cmdline to decide if it's a kafka consumer process
+            try:
+                with open(f"/proc/{child_pid}/cmdline", "rb") as f:
+                    cmdline = f.read().replace(b"\x00", b" ").decode("utf-8", "replace").strip()
+            except Exception:
+                cmdline = ""
+            if not cmdline:
+                continue
+            if any(token in cmdline for token in ("kafka-console-consumer", "kafka.tools.ConsoleConsumer", "ConsoleConsumer", "kafka-console-producer")):
+                logging.info("Terminating child consumer pid=%s cmd=%s", child_pid, cmdline[:200])
+                try:
+                    os.kill(child_pid, signal.SIGTERM)
+                except Exception:
+                    logging.exception("Failed to SIGTERM child %s", child_pid)
+                # Wait briefly for child to exit, then escalate
+                for _ in range(5):
+                    time.sleep(1)
+                    if not os.path.exists(f"/proc/{child_pid}"):
+                        break
+                else:
+                    logging.warning("Child %s did not exit; sending SIGKILL", child_pid)
+                    try:
+                        os.kill(child_pid, signal.SIGKILL)
+                    except Exception:
+                        logging.exception("Failed to SIGKILL child %s", child_pid)
+    except Exception:
+        logging.exception("Error while terminating child processes")
 
 
 
@@ -255,7 +301,14 @@ def process_task(task: Dict[str, Any], publisher: Optional[Callable[[Dict[str, A
                 logging.error("Execution guard blocked execution: %s", reason)
                 result_msg = build_result_message(task, run_dir, status="failed", summary=f"Execution blocked by guard: {reason}")
             else:
-                exec_meta = openhands_executor.execute_task(run_dir, task)
+                executor_type = os.environ.get("OPENHANDS_EXECUTOR", "cli").strip().lower()
+                if executor_type == "sdk":
+                    from . import openhands_sdk_executor
+                    logging.info("OpenHands executor adapter: sdk")
+                    exec_meta = openhands_sdk_executor.execute_task(run_dir, task)
+                else:
+                    logging.info("OpenHands executor adapter: cli")
+                    exec_meta = openhands_executor.execute_task(run_dir, task)
                 exec_status = exec_meta.get("status")
                 if exec_status in ("completed", "executed"):
                     status = "executed"
@@ -270,6 +323,13 @@ def process_task(task: Dict[str, Any], publisher: Optional[Callable[[Dict[str, A
             result_msg = build_result_message(task, run_dir, status="dry_run_completed")
 
         # Publish result
+        # Defensive: if we're in execute mode, do not publish an intermediate dry_run_completed message.
+        status = result_msg.get("status")
+        if execution_mode == "execute" and status == "dry_run_completed":
+            logging.warning("Skipping intermediate dry_run_completed publish in execute mode for task %s", task_id)
+            # Treat as processed but not published
+            return {"processed": True, "published": False, "pub_meta": {"reason": "skipped_intermediate_dry_run"}, "result_id": result_msg.get("resultId")}
+
         try:
             success, pub_meta = publisher(result_msg, topic=RESULT_TOPIC)
         except TypeError:

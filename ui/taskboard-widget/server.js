@@ -512,6 +512,230 @@ app.get('/api/agents', (req, res) => {
 })
 
 // Duplicate endpoint under /taskboard for app BASE_URL compatibility
+
+
+function readJsonlFile(filePath) {
+  try {
+    if (!filePath || !fs.existsSync(filePath)) return [];
+    const raw = fs.readFileSync(filePath, 'utf8');
+    return raw
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .map((line) => {
+        try { return JSON.parse(line); } catch (_e) { return null; }
+      })
+      .filter(Boolean);
+  } catch (_e) {
+    return [];
+  }
+}
+
+function buildFollowupsResponse() {
+  const suggestionsFile = process.env.FOLLOWUP_SUGGESTIONS_FILE || '/var/lib/ai-dev-runner/followup_suggestions.jsonl';
+  const decisionsFile = process.env.FOLLOWUP_DECISIONS_FILE || '/var/lib/ai-dev-runner/followup_decisions.jsonl';
+  const publishedFile = process.env.FOLLOWUP_PUBLISHED_FILE || '/var/lib/ai-dev-runner/followup_published.jsonl';
+
+  const suggestions = readJsonlFile(suggestionsFile);
+  const decisions = readJsonlFile(decisionsFile);
+  const published = readJsonlFile(publishedFile);
+
+  const decisionById = {};
+  for (const d of decisions) {
+    if (d && d.suggestionId) decisionById[d.suggestionId] = d.decision || 'pending';
+  }
+
+  const publishedIds = new Set(
+    published
+      .filter((p) => p && p.suggestionId)
+      .map((p) => p.suggestionId)
+  );
+
+  return suggestions
+    .slice()
+    .reverse()
+    .map((s) => ({
+      suggestionId: s.suggestionId || null,
+      parentTaskId: s.parentTaskId || null,
+      conversationId: s.conversationId || null,
+      title: s.title || '',
+      description: s.description || '',
+      reason: s.reason || '',
+      source: s.source || '',
+      generatedAt: s.generatedAt || null,
+      decision: s.suggestionId && decisionById[s.suggestionId] ? decisionById[s.suggestionId] : 'pending',
+      published: !!(s.suggestionId && publishedIds.has(s.suggestionId)),
+    }));
+}
+
+app.get('/taskboard/api/followups', (req, res) => {
+  res.json(buildFollowupsResponse());
+});
+
+// Follow-ups manual actions: approve, reject, publish
+app.post('/taskboard/api/followups/:id/approve', (req, res) => {
+  try {
+    const serverToken = process.env.TASKBOARD_API_TOKEN;
+    if (!serverToken) {
+      return res.status(500).json({ error: 'Server misconfiguration: TASKBOARD_API_TOKEN not set' });
+    }
+    const authHeader = req.headers.authorization || req.headers.Authorization || '';
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({ error: 'Missing Authorization header' });
+    }
+    const provided = authHeader.slice('Bearer '.length).trim();
+    if (provided !== serverToken) {
+      return res.status(403).json({ error: 'Invalid token' });
+    }
+
+    const suggestionId = req.params.id;
+    if (!suggestionId) return res.status(400).json({ error: 'Missing suggestion id' });
+
+    const pythonCode = `
+import json, sys
+from reviewer import followup_approval
+data = json.loads(sys.stdin.read() or "{}")
+try:
+    out = followup_approval.approve_suggestion(data.get("suggestionId"))
+    print(json.dumps({"ok": True, "decision": out}, ensure_ascii=False))
+except Exception as e:
+    import traceback
+    print(json.dumps({"ok": False, "error": str(e), "trace": traceback.format_exc()}))
+    sys.exit(2)
+`;
+
+    const env = Object.assign({}, process.env);
+    env.PYTHONPATH = path.resolve(__dirname, '..', '..');
+    const proc = spawnSync('python3', ['-c', pythonCode], { input: JSON.stringify({ suggestionId }), encoding: 'utf8', env: env, timeout: 30000 });
+    const out = (proc.stdout || '').trim();
+    try {
+      const parsed = JSON.parse(out || '{}');
+      if (proc.status === 0 && parsed && parsed.ok) {
+        return res.json({ ok: true, decision: parsed.decision });
+      } else {
+        return res.status(502).json({ ok: false, error: parsed.error || 'python_failed', meta: parsed, stdout: out, stderr: proc.stderr });
+      }
+    } catch (e) {
+      return res.status(502).json({ ok: false, error: 'invalid_python_output', stdout: out, stderr: proc.stderr });
+    }
+  } catch (e) {
+    console.error('followup approve handler error', e);
+    return res.status(500).json({ ok: false, error: 'internal server error' });
+  }
+});
+
+app.post('/taskboard/api/followups/:id/reject', (req, res) => {
+  try {
+    const serverToken = process.env.TASKBOARD_API_TOKEN;
+    if (!serverToken) {
+      return res.status(500).json({ error: 'Server misconfiguration: TASKBOARD_API_TOKEN not set' });
+    }
+    const authHeader = req.headers.authorization || req.headers.Authorization || '';
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({ error: 'Missing Authorization header' });
+    }
+    const provided = authHeader.slice('Bearer '.length).trim();
+    if (provided !== serverToken) {
+      return res.status(403).json({ error: 'Invalid token' });
+    }
+
+    const suggestionId = req.params.id;
+    if (!suggestionId) return res.status(400).json({ error: 'Missing suggestion id' });
+
+    const pythonCode = `
+import json, sys
+from reviewer import followup_approval
+data = json.loads(sys.stdin.read() or "{}")
+try:
+    out = followup_approval.reject_suggestion(data.get("suggestionId"))
+    print(json.dumps({"ok": True, "decision": out}, ensure_ascii=False))
+except Exception as e:
+    import traceback
+    print(json.dumps({"ok": False, "error": str(e), "trace": traceback.format_exc()}))
+    sys.exit(2)
+`;
+
+    const env = Object.assign({}, process.env);
+    env.PYTHONPATH = path.resolve(__dirname, '..', '..');
+    const proc = spawnSync('python3', ['-c', pythonCode], { input: JSON.stringify({ suggestionId }), encoding: 'utf8', env: env, timeout: 30000 });
+    const out = (proc.stdout || '').trim();
+    try {
+      const parsed = JSON.parse(out || '{}');
+      if (proc.status === 0 && parsed && parsed.ok) {
+        return res.json({ ok: true, decision: parsed.decision });
+      } else {
+        return res.status(502).json({ ok: false, error: parsed.error || 'python_failed', meta: parsed, stdout: out, stderr: proc.stderr });
+      }
+    } catch (e) {
+      return res.status(502).json({ ok: false, error: 'invalid_python_output', stdout: out, stderr: proc.stderr });
+    }
+  } catch (e) {
+    console.error('followup reject handler error', e);
+    return res.status(500).json({ ok: false, error: 'internal server error' });
+  }
+});
+
+app.post('/taskboard/api/followups/:id/publish', (req, res) => {
+  try {
+    const serverToken = process.env.TASKBOARD_API_TOKEN;
+    if (!serverToken) {
+      return res.status(500).json({ error: 'Server misconfiguration: TASKBOARD_API_TOKEN not set' });
+    }
+    const authHeader = req.headers.authorization || req.headers.Authorization || '';
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({ error: 'Missing Authorization header' });
+    }
+    const provided = authHeader.slice('Bearer '.length).trim();
+    if (provided !== serverToken) {
+      return res.status(403).json({ error: 'Invalid token' });
+    }
+
+    const suggestionId = req.params.id;
+    if (!suggestionId) return res.status(400).json({ error: 'Missing suggestion id' });
+
+    const pythonCode = `
+import json, sys
+from reviewer import followup_publisher
+data = json.loads(sys.stdin.read() or "{}")
+sid = data.get('suggestionId')
+# Only publish if present in approved suggestions (and not yet published)
+approved = followup_publisher.get_approved_suggestions(limit=None)
+target = None
+for s in approved:
+    if s.get('suggestionId') == sid:
+        target = s
+        break
+if not target:
+    print(json.dumps({'ok': False, 'error': 'not_approved_or_already_published'}))
+    sys.exit(2)
+ok, meta = followup_publisher.publish_approved_suggestion(target)
+print(json.dumps({'ok': ok, 'meta': meta}, ensure_ascii=False))
+if not ok:
+    sys.exit(2)
+`;
+
+    const env = Object.assign({}, process.env);
+    env.PYTHONPATH = path.resolve(__dirname, '..', '..');
+    const proc = spawnSync('python3', ['-c', pythonCode], { input: JSON.stringify({ suggestionId }), encoding: 'utf8', env: env, timeout: 60000 });
+    const out = (proc.stdout || '').trim();
+    try {
+      const parsed = JSON.parse(out || '{}');
+      if (proc.status === 0 && parsed && parsed.ok) {
+        return res.json({ ok: true, meta: parsed.meta });
+      } else {
+        return res.status(502).json({ ok: false, error: parsed.error || 'python_failed', meta: parsed, stdout: out, stderr: proc.stderr });
+      }
+    } catch (e) {
+      return res.status(502).json({ ok: false, error: 'invalid_python_output', stdout: out, stderr: proc.stderr });
+    }
+  } catch (e) {
+    console.error('followup publish handler error', e);
+    return res.status(500).json({ ok: false, error: 'internal server error' });
+  }
+});
+
+
+
 app.get('/taskboard/api/agents', (req, res) => {
   const registryPath = process.env.AGENT_REGISTRY_STORAGE || '/tmp/ai-dev-agent-registry.json'
   try {
