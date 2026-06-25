@@ -954,7 +954,7 @@ function TaskDetail({
     }
   }
 
-  if (true) {
+  if (chatMode) {
     return (
       <div className="task-detail chat-mode">
         <div className="chat-header" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -1077,10 +1077,277 @@ function TaskDetail({
     )
   }
 
-  // Legacy inspector removed — ConversationWorkspace is the single inspector implementation.
-  // The chat-mode branch above already returns ConversationWorkspace unconditionally.
-  return null
+    return (
 
+    <div className="task-detail">
+      <h2>{local.title}</h2>
+      <div style={{ marginBottom: 8 }}>
+        <label style={{ display: 'block', fontSize: 12 }}>Task ID</label>
+        <input
+          type="text"
+          value={local.taskId || ''}
+          onChange={(e) => update({ taskId: (e.target as HTMLInputElement).value })}
+          placeholder="e.g. PWA-DBWRITE-SMOKE-001"
+          style={{ width: '100%', padding: 6 }}
+        />
+        {!local.taskId ? <div style={{ color: '#b45309', marginTop: 6 }}>Task ID is required to approve actions.</div> : null}
+      </div>
+
+      {/* connection/info */}
+      <div style={{ marginBottom: 8 }}>
+        <strong>Connection:</strong> {widgetInfo.connected ? 'Matrix Connected' : 'Local Mode'}
+      </div>
+
+      {/* Session chain (read-only) */}
+      <div style={{ margin: '8px 0 12px 0' }}>{renderSessionChainCard()}</div>
+
+
+      {/* brief developer info shown only when requested */}
+      {showDev ? (
+        <div style={{ fontSize: 12, color: '#666', marginBottom: 8 }}>
+          <div>Widget ID: {widgetInfo.widgetId || '(none)'}</div>
+          <div>Parent URL: {widgetInfo.parentUrl || '(none)'}</div>
+          <div>Room ID: {widgetInfo.roomId || '(none)'}</div>
+          <div>Capabilities Granted: {widgetInfo.capabilitiesGranted ? 'yes' : 'no'}</div>
+          <div style={{ marginTop: 6 }}><strong>Session / Runner</strong></div>
+          <div>Root Task: {local.rootTaskId || '(none)'}</div>
+          <div>Parent Task: {(local as any).parentTaskId || '(none)'}</div>
+          <div>OpenHands Conversation: {(local as any).conversationId || '(none)'}</div>
+          <div>Previous Run Directory: {local.context && (local.context as any).previousRunDirectory ? (local.context as any).previousRunDirectory : '(none)'}</div>
+        </div>
+      ) : (
+        <div style={{ fontSize: 12, color: '#666', marginBottom: 8 }}>
+          <div>Capabilities: {widgetInfo.capabilitiesGranted ? 'yes' : 'no'}</div>
+        </div>
+      )}
+
+      {/* toast */}
+      {toast.message ? (
+        <div className={`toast ${toast.type ? `toast-${toast.type}` : ''}`}>{toast.message}</div>
+      ) : null}
+
+      <div className="panel">
+        <h4>OpenHands output {headerUpdated ? <span className="badge-updated">Updated</span> : null}</h4>
+        <pre className={highlightedResultId ? 'result-highlight' : ''}>{local.openhandsResponse}</pre>
+        <div style={{ marginTop: 8 }}>
+          <button className="small" onClick={copyOutput} style={{ marginRight: 8 }}>Copy Output</button>
+          <button className="small" onClick={copyFor2ndOpinion}>Copy for 2nd Opinion</button>
+        </div>
+      </div>
+
+      <div className="panel">
+        <h4>Reviewer summary</h4>
+        <pre>{local.reviewerSummary}</pre>
+        <div style={{ marginTop: 8 }}>
+          <button className="small" onClick={copySummary}>Copy Summary</button>
+        </div>
+      </div>
+
+      <div className="panel">
+        <h4>Proposed actions</h4>
+        <button className="small" onClick={addAction} style={{ marginBottom: 8 }}>
+          + Create New Action
+        </button>
+        <div style={{ marginBottom: 8 }}>
+          <strong>Selected:</strong>{' '}
+          {selectedActionObj ? `${selectedActionObj.description} (${selectedActionObj.id})` : 'None'}
+        </div>
+        {local.proposedActions.map((a) =>
+          isMobile ? (
+            <label
+              key={a.id}
+              className={`action action-mobile${local.selectedAction === a.id ? ' selected-action' : ''}`}
+              style={{ display: 'flex', alignItems: 'center' }}
+            >
+              <input
+                type="radio"
+                name={`selected-${local.taskId}`}
+                checked={local.selectedAction === a.id}
+                onChange={() => update({ selectedAction: a.id })}
+              />
+              <div style={{ marginLeft: 8 }}>
+                <div style={{ fontWeight: 600 }}>{a.description}</div>
+                <div className="muted" style={{ fontSize: 12 }}>{a.type}</div>
+              </div>
+            </label>
+          ) : (
+            <div key={a.id} className="action">
+              <input
+                type="radio"
+                name={`selected-${local.taskId}`}
+                checked={local.selectedAction === a.id}
+                onChange={() => update({ selectedAction: a.id })}
+                title="Select this action"
+              />
+              <input
+                type="text"
+                value={a.description}
+                onChange={(e) => updateAction(a.id, { description: e.target.value })}
+              />
+              <select value={a.type} onChange={(e) => updateAction(a.id, { type: e.target.value })}>
+                <option value="commit">commit</option>
+                <option value="push">push</option>
+                <option value="docs">docs</option>
+                <option value="test">test</option>
+                <option value="manual">manual</option>
+              </select>
+              <button className="small" onClick={() => removeAction(a.id)}>
+                Remove
+              </button>
+              <button className="small" onClick={() => sendEditAction(a)} style={{ marginLeft: 8 }}>
+                Submit Edited Action
+              </button>
+            </div>
+          )
+        )}
+      </div>
+
+      <div className="panel">
+        <h4>Notes</h4>
+        <textarea value={local.notes} onChange={(e) => update({ notes: e.target.value })} />
+      </div>
+
+      {/* Mobile FAB + Bottom Sheet */}
+      {isMobile ? (
+        <>
+          <button className="fab" onClick={() => setShowFab(true)}>+ Action</button>
+
+          {showFab ? (
+            <div className="bottom-sheet-overlay" onClick={() => setShowFab(false)}>
+              <div className="bottom-sheet" onClick={(e) => e.stopPropagation()}>
+                <h4>Action Tools</h4>
+                <div className="sheet-option" onClick={() => { setShowCreate(true); setShowFab(false) }}>Create New Action</div>
+                <div className={`sheet-option ${!selectedActionObj ? 'disabled' : ''}`} onClick={() => {
+                  if (selectedActionObj) {
+                    setEditedType(selectedActionObj.type)
+                    setEditedDesc(selectedActionObj.description)
+                    try { setEditedPayloadText(JSON.stringify(selectedActionObj.payload || {}, null, 2)) } catch (e) { setEditedPayloadText(String(selectedActionObj.payload || '')) }
+                    setShowEdit(true)
+                    setShowFab(false)
+                  }
+                }}>
+                  Edit Selected Action
+                </div>
+                <div className="sheet-option" onClick={() => { setShowPaste(true); setShowFab(false) }}>Paste 2nd Opinion</div>
+                <div className="sheet-option" onClick={() => setShowFab(false)}>Cancel</div>
+              </div>
+            </div>
+          ) : null}
+
+          {/* Create Sheet */}
+          {showCreate ? (
+            <div className="modal-overlay" onClick={() => setShowCreate(false)}>
+              <div className="modal" onClick={(e) => e.stopPropagation()}>
+                <h3>Create New Action</h3>
+                <div className="form-row">
+                  <label>Type</label>
+                  <select value={newType} onChange={(e) => setNewType(e.target.value)}>
+                    <option value="manual">manual</option>
+                    <option value="test">test</option>
+                    <option value="docs">docs</option>
+                    <option value="push">push</option>
+                    <option value="commit">commit</option>
+                  </select>
+                </div>
+                <div className="form-row">
+                  <label>Description</label>
+                  <textarea value={newDesc} onChange={(e) => setNewDesc(e.target.value)} />
+                </div>
+                <div className="form-row">
+                  <label>Payload (JSON, optional)</label>
+                  <textarea value={newPayloadText} onChange={(e) => setNewPayloadText(e.target.value)} placeholder='{"key": "value"}' />
+                </div>
+                <div className="form-actions">
+                  <button onClick={() => setShowCreate(false)}>Cancel</button>
+                  <button onClick={handleCreateSave}>Save</button>
+                </div>
+              </div>
+            </div>
+          ) : null}
+
+          {/* Edit Sheet */}
+          {showEdit ? (
+            <div className="modal-overlay" onClick={() => setShowEdit(false)}>
+              <div className="modal" onClick={(e) => e.stopPropagation()}>
+                <h3>Edit Selected Action</h3>
+                <div className="form-row">
+                  <label>Type</label>
+                  <select value={editedType} onChange={(e) => setEditedType(e.target.value)}>
+                    <option value="manual">manual</option>
+                    <option value="test">test</option>
+                    <option value="docs">docs</option>
+                    <option value="push">push</option>
+                    <option value="commit">commit</option>
+                  </select>
+                </div>
+                <div className="form-row">
+                  <label>Description</label>
+                  <textarea value={editedDesc} onChange={(e) => setEditedDesc(e.target.value)} />
+                </div>
+                <div className="form-row">
+                  <label>Payload (JSON)</label>
+                  <textarea value={editedPayloadText} onChange={(e) => setEditedPayloadText(e.target.value)} />
+                </div>
+                <div className="form-actions">
+                  <button onClick={() => setShowEdit(false)}>Cancel</button>
+                  <button onClick={handleEditSave}>Save</button>
+                </div>
+              </div>
+            </div>
+          ) : null}
+
+          {/* Paste Sheet */}
+          {showPaste ? (
+            <div className="modal-overlay" onClick={() => setShowPaste(false)}>
+              <div className="modal" onClick={(e) => e.stopPropagation()}>
+                <h3>Paste 2nd Opinion</h3>
+                <div className="form-row">
+                  <label>Paste JSON or plain text</label>
+                  <textarea value={pasteText} onChange={(e) => setPasteText(e.target.value)} placeholder='{"type":"manual","description":"...","payload":{}}' />
+                </div>
+                <div className="form-actions">
+                  <button onClick={() => setShowPaste(false)}>Cancel</button>
+                  <button onClick={handlePasteSave}>Save</button>
+                </div>
+              </div>
+            </div>
+          ) : null}
+
+          {/* Copy fallback modal */}
+          {showCopyModal ? (
+            <div className="modal-overlay" onClick={() => setShowCopyModal(false)}>
+              <div className="modal" onClick={(e) => e.stopPropagation()}>
+                <h3>Copy text</h3>
+                <textarea value={pasteText} readOnly />
+                <div className="form-actions">
+                  <button onClick={() => setShowCopyModal(false)}>Close</button>
+                </div>
+              </div>
+            </div>
+          ) : null}
+
+        </>
+      ) : null}
+
+      {!isMobile ? (
+        <div className="buttons">
+          <button onClick={handleSave}>Save</button>
+          <button onClick={() => doDecision('approved')} disabled={!local.selectedAction || !local.taskId || !local.taskId.trim()}>
+            Approve Selected Action
+          </button>
+          <button onClick={() => doDecision('denied')}>Deny</button>
+          <button onClick={() => doDecision('deferred')}>Defer</button>
+        </div>
+      ) : (
+        <div className="mobile-action-bar">
+          <button onClick={handleSave}>Save</button>
+          <button onClick={() => doDecision('approved')} disabled={!local.selectedAction || !local.taskId || !local.taskId.trim()}>Approve</button>
+          <button onClick={() => doDecision('denied')}>Deny</button>
+          <button onClick={() => doDecision('deferred')}>Defer</button>
+        </div>
+      )}
+    </div>
+  )
 }
 
 export default function App() {

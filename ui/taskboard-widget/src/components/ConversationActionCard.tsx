@@ -1,4 +1,5 @@
 import React from 'react'
+import { safeText } from './safeText'
 
 export default function ConversationActionCard({ task }: any) {
   const recs = task && task.proposedActions ? task.proposedActions : [
@@ -6,6 +7,19 @@ export default function ConversationActionCard({ task }: any) {
     'Update README',
     'Run smoke'
   ]
+
+  function renderActionLabel(a: any) {
+    if (a === null || a === undefined) return ''
+    if (typeof a === 'string' || typeof a === 'number') return String(a)
+    // For proposed actions prefer description, then title, then id
+    if (typeof a === 'object') {
+      if (a.description != null) return String(a.description)
+      if (a.title != null) return String(a.title)
+      if (a.id != null) return String(a.id)
+      return safeText(a)
+    }
+    return safeText(a)
+  }
 
   return (
     <div style={{ padding: 8, borderRadius: 6, border: '1px solid #eee', background: '#fff' }}>
@@ -15,10 +29,10 @@ export default function ConversationActionCard({ task }: any) {
       </div>
 
       <div>
-        {recs.map((r: string, i: number) => (
+        {recs.map((r: any, i: number) => (
           <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
             <input type="checkbox" />
-            <div style={{ flex: 1 }}>{r}</div>
+            <div style={{ flex: 1 }}>{renderActionLabel(r)}</div>
           </div>
         ))}
       </div>

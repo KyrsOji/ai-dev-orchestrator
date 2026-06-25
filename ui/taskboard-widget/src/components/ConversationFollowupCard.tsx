@@ -1,4 +1,5 @@
 import React, { useState } from 'react'
+import { safeText } from './safeText'
 
 export default function ConversationFollowupCard({ followup, token }: any) {
   // Local UI state for decision and published status
@@ -52,8 +53,8 @@ export default function ConversationFollowupCard({ followup, token }: any) {
 
   return (
     <div style={{ padding: 8, borderRadius: 6, border: '1px solid #eee', background: '#fff' }}>
-      <div style={{ fontWeight: 700 }}>{followup && followup.title ? followup.title : 'Follow-up'}</div>
-      <div style={{ marginTop: 6 }}>{followup && followup.reason ? followup.reason : ''}</div>
+      <div style={{ fontWeight: 700 }}>{safeText(followup && followup.title) || 'Follow-up'}</div>
+      <div style={{ marginTop: 6 }}>{safeText(followup && followup.reason)}</div>
 
       <div style={{ marginTop: 8, display: 'flex', gap: 8, alignItems: 'center' }}>
         <button className="small" disabled={loading !== null} onClick={() => callAction('approve')}>
