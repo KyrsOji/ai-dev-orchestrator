@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { useEffect, useState } from 'react'
 import ConversationHeader from './ConversationHeader'
 import ConversationTimeline from './ConversationTimeline'
 import ConversationSessionChain from './ConversationSessionChain'
@@ -15,6 +15,53 @@ const containerStyle: React.CSSProperties = {
 
 export default function ConversationWorkspace(props: any) {
   const { task, tasks, messages, openTask } = props
+
+
+  // Follow-ups state and polling
+  const [followups, setFollowups] = useState<any[]>([])
+  const [loadingFollowups, setLoadingFollowups] = useState<boolean>(false)
+
+  useEffect(() => {
+    let mounted = true
+    let intervalId: any = null
+
+    async function fetchFollowups() {
+      setLoadingFollowups(true)
+      try {
+        const res = await fetch('/taskboard/api/followups')
+        if (!res.ok) {
+          console.error('Failed to fetch followups', res.status)
+          return
+        }
+        const data = await res.json()
+        if (!mounted) return
+        // Ensure newest-first ordering (by generatedAt descending if available)
+        const sorted = Array.isArray(data)
+          ? data.slice().sort((a: any, b: any) => {
+              const ta = a && a.generatedAt ? Date.parse(a.generatedAt) : 0
+              const tb = b && b.generatedAt ? Date.parse(b.generatedAt) : 0
+              return tb - ta
+            })
+          : []
+        setFollowups(sorted)
+      } catch (e) {
+        console.error('Error fetching followups', e)
+      } finally {
+        if (mounted) setLoadingFollowups(false)
+      }
+    }
+
+    // Initial fetch
+    fetchFollowups()
+
+    // Poll every 30s
+    intervalId = setInterval(fetchFollowups, 30000)
+
+    return () => {
+      mounted = false
+      if (intervalId) clearInterval(intervalId)
+    }
+  }, [])
 
   return (
     <div className="conversation-workspace" style={containerStyle}>
@@ -41,7 +88,29 @@ export default function ConversationWorkspace(props: any) {
 
       <div>
         <div style={{ fontWeight: 700, marginBottom: 8 }}>Follow-ups</div>
-        <ConversationFollowupCard followup={{ title: 'Follow-up Suggested', reason: 'Verify Matrix approval path', description: 'Execution completed successfully' }} />
+        {/** Follow-ups list fetched from backend (newest-first). */}
+        {loadingFollowups ? (
+          <div>Loading follow-ups...</div>
+        ) : followups.length === 0 ? (
+          <div>No staged follow-ups yet.</div>
+        ) : (
+          followups.map((f: any) => (
+            <div key={f.suggestionId || `${f.generatedAt}-${Math.random()}`} style={{ marginBottom: 8 }}>
+              <ConversationFollowupCard followup={{
+                suggestionId: f.suggestionId || null,
+                parentTaskId: f.parentTaskId || null,
+                conversationId: f.conversationId || null,
+                title: f.title || '',
+                description: f.description || '',
+                reason: f.reason || '',
+                decision: f.decision || 'pending',
+                published: !!f.published,
+                generatedAt: f.generatedAt || null,
+              }} />
+            </div>
+          ))
+        )}
+
         <ConversationComposer
           placeholder="Write a note or update task..."
           disabled={!task}
