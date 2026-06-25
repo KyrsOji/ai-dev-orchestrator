@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { useState } from 'react'
 import { safeText } from '../components/safeText'
 
 type Event = {
@@ -174,6 +174,31 @@ export default function ConversationMessage({ event }: { event: Event }) {
   // For execution-style events, attempt to show a compact card
   const isExecution = actor === 'execution' || event.type === 'execution'
 
+  // execution payload helpers (support common field name variations)
+  const exec = event.data || {}
+  const getField = (o: any, ...names: string[]) => {
+    for (const n of names) {
+      if (o && o[n] !== undefined && o[n] !== null) return o[n]
+    }
+    return undefined
+  }
+
+  const conversationId = getField(exec, 'conversationId', 'conversation_id')
+  const executionStatusRaw = getField(exec, 'executionStatus', 'execution_status', 'status')
+  const executionStatus = executionStatusRaw ? String(executionStatusRaw).toLowerCase() : ''
+  const statusLabel = executionStatus ? (String(executionStatus).charAt(0).toUpperCase() + String(executionStatus).slice(1)) : 'Unknown'
+  const returnCode = getField(exec, 'returnCode', 'return_code', 'rc')
+  const duration = getField(exec, 'duration', 'elapsed', 'time')
+  const eventTypeCounts = getField(exec, 'eventTypeCounts', 'event_type_counts', 'eventCounts')
+  const runDirectory = getField(exec, 'runDirectory', 'run_directory', 'runDir')
+  const responsePreview = getField(exec, 'responsePreview', 'response_preview', 'response')
+  const summary = getField(exec, 'summary', 'summaryText')
+  const taskId = getField(exec, 'taskId', 'task_id', 'id')
+
+  const statusColor = executionStatus === 'completed' ? '#10b981' : executionStatus === 'running' ? '#f59e0b' : executionStatus === 'failed' ? '#ef4444' : '#6b7280'
+
+  const [open, setOpen] = useState(false)
+
   return (
     <div className={`chat-row ${actor === 'human' ? 'me' : ''}`} tabIndex={0} style={{ animation: 'fadeIn 160ms ease-in' }}>
       <div className="chat-avatar" aria-hidden style={{ background: avatarColors[map.class] || avatarColors.default }}>
@@ -188,12 +213,73 @@ export default function ConversationMessage({ event }: { event: Event }) {
 
         {isExecution ? (
           <div className={`chat-bubble actor-${map.class}`}>
-            <div style={{ fontWeight: 700, marginBottom: 8 }}>⚙ SDK Execution</div>
-            <div style={{ fontSize: 13, color: '#374151' }}>{safeText(event.text)}</div>
-            <details style={{ marginTop: 10 }}>
-              <summary style={{ cursor: 'pointer' }}>Expand</summary>
-              <div className="message-data" style={{ marginTop: 8 }}>{safeText(JSON.stringify(event.data || {}, null, 2))}</div>
-            </details>
+            <div className="execution-card">
+              <div
+                className="execution-header"
+                role="button"
+                tabIndex={0}
+                onClick={() => setOpen(!open)}
+                onKeyDown={(e: any) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setOpen(!open) } }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                  <div className="exec-icon" aria-hidden>⚙</div>
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontWeight: 800 }}>{'SDK Execution'}{taskId ? ` · ${safeText(taskId)}` : ''}</div>
+                    {summary ? <div style={{ fontSize: 13, color: '#374151', marginTop: 4 }}>{safeText(summary)}</div> : null}
+                  </div>
+                </div>
+
+                <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, alignItems: 'center' }}>
+                  {returnCode !== undefined && returnCode !== null ? (
+                    <div className="exec-pill exec-pill-rc">{`RC ${String(returnCode)}`}</div>
+                  ) : null}
+
+                  <div className="exec-pill" style={{ background: statusColor, color: '#fff' }}>{statusLabel}</div>
+
+                  <div className={`exec-chevron ${open ? 'open' : ''}`} aria-hidden>▾</div>
+                </div>
+              </div>
+
+              <div className={`execution-body ${open ? 'open' : ''}`}>
+                <div className="execution-grid">
+                  {conversationId ? (
+                    <div className="execution-field">
+                      <div className="field-label">Conversation</div>
+                      <div className="field-value">{safeText(conversationId)}</div>
+                    </div>
+                  ) : null}
+
+                  {duration ? (
+                    <div className="execution-field">
+                      <div className="field-label">Duration</div>
+                      <div className="field-value">{safeText(duration)}</div>
+                    </div>
+                  ) : null}
+
+                  {eventTypeCounts ? (
+                    <div className="execution-field" style={{ flex: '1 1 100%' }}>
+                      <div className="field-label">Events</div>
+                      <div className="field-value"><pre style={{ margin: 0 }}><code>{escapeHtml(typeof eventTypeCounts === 'string' ? eventTypeCounts : JSON.stringify(eventTypeCounts))}</code></pre></div>
+                    </div>
+                  ) : null}
+
+                  {runDirectory ? (
+                    <div className="execution-field">
+                      <div className="field-label">Run Directory</div>
+                      <div className="field-value">{safeText(runDirectory)}</div>
+                    </div>
+                  ) : null}
+                </div>
+
+                {responsePreview ? (
+                  <div style={{ marginTop: 12 }}>
+                    <div style={{ fontWeight: 700, marginBottom: 8 }}>Response Preview</div>
+                    <pre className="message-data" style={{ maxHeight: 260, overflow: 'auto' }}><code>{escapeHtml(typeof responsePreview === 'string' ? responsePreview : JSON.stringify(responsePreview, null, 2))}</code></pre>
+                  </div>
+                ) : null}
+
+              </div>
+            </div>
           </div>
         ) : (
           <div className={`chat-bubble actor-${map.class}`} dangerouslySetInnerHTML={bubbleHtml} />
