@@ -1726,11 +1726,6 @@ export default function App() {
 
   // Standalone API token (stored in localStorage)
   const [standaloneToken, setStandaloneToken] = useState<string | null>(null)
-  // Follow-ups state (staged suggestions, decisions, published tracking)
-  const [followups, setFollowups] = useState<any[]>([])
-  const [followupsLoading, setFollowupsLoading] = useState<boolean>(false)
-  
-
   const [tokenInput, setTokenInput] = useState<string>('')
 
   const [rawParams, setRawParams] = useState<{ rawWidgetId: string | null; rawParentUrl: string | null; rawRoomId: string | null }>({
@@ -2118,132 +2113,6 @@ export default function App() {
   useEffect(() => {
     let iv: any = null
     let cancelled = false
-
-  // Load follow-ups (staged suggestions) from server
-  async function loadFollowups() {
-    setFollowupsLoading(true)
-    try {
-      const res = await fetch(`${import.meta.env.BASE_URL}api/followups`)
-      if (!res.ok) throw new Error(`Failed to fetch followups: ${res.status}`)
-      const data = await res.json()
-      setFollowups(Array.isArray(data) ? data : [])
-    } catch (e) {
-      console.error('loadFollowups error', e)
-    } finally {
-      setFollowupsLoading(false)
-    }
-  }
-
-  async function approveFollowup(suggestionId: string) {
-    const token = standaloneToken || (typeof window !== 'undefined' ? window.localStorage.getItem('taskboard_standalone_token') : null)
-    if (!token) {
-      setToast({ type: 'error', message: 'Standalone API token required' })
-      setTimeout(() => setToast({ type: null, message: null }), 4000)
-      return
-    }
-    setToast({ type: 'warning', message: 'Approving suggestion...' })
-    try {
-      const res = await fetch(`${import.meta.env.BASE_URL}api/followups/${encodeURIComponent(suggestionId)}/approve`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({}),
-      })
-      if (!res.ok) {
-        const txt = await res.text()
-        console.error('Approve failed', res.status, txt)
-        setToast({ type: 'error', message: `Approve failed: ${res.status}` })
-        setTimeout(() => setToast({ type: null, message: null }), 6000)
-        return
-      }
-      const js = await res.json()
-      setToast({ type: 'success', message: 'Suggestion approved' })
-      setTimeout(() => setToast({ type: null, message: null }), 3000)
-      await loadFollowups()
-    } catch (e) {
-      console.error('approveFollowup error', e)
-      setToast({ type: 'error', message: 'Approve failed' })
-      setTimeout(() => setToast({ type: null, message: null }), 6000)
-    }
-  }
-
-  async function rejectFollowup(suggestionId: string) {
-    const token = standaloneToken || (typeof window !== 'undefined' ? window.localStorage.getItem('taskboard_standalone_token') : null)
-    if (!token) {
-      setToast({ type: 'error', message: 'Standalone API token required' })
-      setTimeout(() => setToast({ type: null, message: null }), 4000)
-      return
-    }
-    setToast({ type: 'warning', message: 'Rejecting suggestion...' })
-    try {
-      const res = await fetch(`${import.meta.env.BASE_URL}api/followups/${encodeURIComponent(suggestionId)}/reject`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({}),
-      })
-      if (!res.ok) {
-        const txt = await res.text()
-        console.error('Reject failed', res.status, txt)
-        setToast({ type: 'error', message: `Reject failed: ${res.status}` })
-        setTimeout(() => setToast({ type: null, message: null }), 6000)
-        return
-      }
-      const js = await res.json()
-      setToast({ type: 'success', message: 'Suggestion rejected' })
-      setTimeout(() => setToast({ type: null, message: null }), 3000)
-      await loadFollowups()
-    } catch (e) {
-      console.error('rejectFollowup error', e)
-      setToast({ type: 'error', message: 'Reject failed' })
-      setTimeout(() => setToast({ type: null, message: null }), 6000)
-    }
-  }
-
-  async function publishFollowup(suggestionId: string) {
-    const token = standaloneToken || (typeof window !== 'undefined' ? window.localStorage.getItem('taskboard_standalone_token') : null)
-    if (!token) {
-      setToast({ type: 'error', message: 'Standalone API token required' })
-      setTimeout(() => setToast({ type: null, message: null }), 4000)
-      return
-    }
-    setToast({ type: 'warning', message: 'Publishing suggestion...' })
-    try {
-      const res = await fetch(`${import.meta.env.BASE_URL}api/followups/${encodeURIComponent(suggestionId)}/publish`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({}),
-      })
-      const text = await res.text()
-      if (!res.ok) {
-        console.error('Publish failed', res.status, text)
-        setToast({ type: 'error', message: `Publish failed: ${res.status}` })
-        setTimeout(() => setToast({ type: null, message: null }), 6000)
-        return
-      }
-      let js = {}
-      try { js = JSON.parse(text) } catch (e) { js = { raw: text } }
-      if (js && js.ok) {
-        setToast({ type: 'success', message: 'Published' })
-      } else {
-        setToast({ type: 'error', message: `Publish failed: ${js && js.error ? js.error : 'unknown'}` })
-      }
-      setTimeout(() => setToast({ type: null, message: null }), 3000)
-      await loadFollowups()
-    } catch (e) {
-      console.error('publishFollowup error', e)
-      setToast({ type: 'error', message: 'Publish failed' })
-      setTimeout(() => setToast({ type: null, message: null }), 6000)
-    }
-  }
-
-  // Poll follow-ups periodically
-  useEffect(() => {
-    let iv: any = null
-    loadFollowups()
-    iv = setInterval(() => { loadFollowups().catch(() => {}) }, 15000)
-    return () => { if (iv) clearInterval(iv) }
-  }, [])
-
-
     async function pollAllResults() {
       if (!tasks || tasks.length === 0) return
       for (const t of tasks) {
@@ -2576,35 +2445,6 @@ export default function App() {
                       <span className="card-status">{t.status}</span>
                       <span className="card-reviewer">{(t.reviewerSummary || '').split('\n')[0]}</span>
                       <span className="card-action">{(t.proposedActions.find(a => a.id === t.selectedAction)?.description) || (t.proposedActions[0]?.description) || ''}</span>
-                    </div>
-                  </div>
-                ))}
-              </Column>
-
-
-              <Column title="Follow-ups">
-                {followups.map((f) => (
-                  <div key={f.suggestionId || uuid('fu-')} className={'card'}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                      <div className="card-title" style={{ flex: 1 }}>{f.title || f.suggestionId}</div>
-                      {f.published ? <div className="badge-updated">Published</div> : null}
-                    </div>
-                    <div className="card-sub">
-                      <span className="card-status">{f.decision || 'pending'}</span>
-                      <span style={{ marginLeft: 8 }}>{f.source}</span>
-                      <span style={{ marginLeft: 8 }}>{timeAgo(f.generatedAt)}</span>
-                    </div>
-                    <div style={{ marginTop: 8 }}>
-                      {f.decision === 'pending' ? (
-                        <>
-                          <button className="small" onClick={() => approveFollowup(f.suggestionId)}>Approve</button>
-                          <button className="small" style={{ marginLeft: 8 }} onClick={() => rejectFollowup(f.suggestionId)}>Reject</button>
-                        </>
-                      ) : f.decision === 'approved' ? (
-                        <>
-                          {f.published ? <span className="badge-updated">Published</span> : <button className="small" onClick={() => publishFollowup(f.suggestionId)}>Publish</button>}
-                        </>
-                      ) : null}
                     </div>
                   </div>
                 ))}
