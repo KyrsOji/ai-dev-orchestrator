@@ -218,6 +218,25 @@ app.use('/taskboard/api/results', (req, res, next) => {
 const distPath = path.join(__dirname, 'dist');
 app.use('/taskboard', express.static(distPath));
 
+// Serve v2 assets under their own path to avoid mixing with legacy /taskboard assets
+app.use('/taskboard-v2/assets', express.static(path.join(distPath, 'assets')));
+
+// Serve /taskboard-v2 and any subpath by rewriting the built index.html asset paths
+const v2IndexPath = path.join(distPath, 'index.html');
+function sendTaskboardV2Index(res) {
+  try {
+    let html = fs.readFileSync(v2IndexPath, 'utf8');
+    // Replace legacy asset path with v2 path, global replace
+    html = html.replace(/\/taskboard\/assets\//g, '/taskboard-v2/assets/');
+    res.set('Content-Type', 'text/html');
+    res.send(html);
+  } catch (e) {
+    res.status(500).send('taskboard-v2 build not found');
+  }
+}
+app.get('/taskboard-v2', (req, res) => sendTaskboardV2Index(res));
+app.get('/taskboard-v2/*', (req, res) => sendTaskboardV2Index(res));
+
 // Duplicate API endpoints under /taskboard/api/* so the app can fetch using the built BASE_URL
 app.get('/taskboard/api/tasks', async (req, res) => {
   // Try aggregator HTTP feed first (local read-model service)
