@@ -355,6 +355,19 @@ pre { white-space: pre-wrap; font-family: inherit; background: #fff; padding: 8p
 }
 
 
+/* Artifacts workspace styling */
+.artifacts-workspace .card { background: #fff; border-radius: 12px; padding: 12px; border: 1px solid #eef2ff; box-shadow: 0 6px 18px rgba(2,6,23,0.04); }
+.artifacts-workspace .file-row { display: flex; gap: 12px; align-items: flex-start; padding: 8px; border-radius: 10px; }
+.artifacts-workspace .file-icon { width: 28px; height: 28px; border-radius: 6px; background: #f8fafc; display: flex; align-items: center; justify-content: center; }
+.artifacts-workspace .file-path { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, monospace; font-weight: 700; }
+.artifacts-workspace .artifact-grid { display: grid; grid-template-columns: 1fr 320px; gap: 12px; }
+.artifacts-workspace .muted { color: #6b7280 }
+
+@media (max-width: 900px) {
+  .artifacts-workspace .artifact-grid { grid-template-columns: 1fr; }
+}
+
+
 @media (max-width: 600px) {
   .chat-row { gap: 8px; }
   .chat-avatar { width: 34px; height: 34px; flex: 0 0 34px; font-size: 12px; }

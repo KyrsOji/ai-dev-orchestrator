@@ -3,6 +3,7 @@ import { safeText } from '../components/safeText'
 import ConversationMessage from './ConversationMessage'
 import ConversationFollowupCard from './ConversationFollowupCard'
 import ConversationActionCard from './ConversationActionCard'
+import ArtifactsWorkspace from './ArtifactsWorkspace'
 
 export default function ConversationTimeline({ task, followups }: { task: any; followups?: any[] }) {
   if (!task) return <div style={{ padding: 16 }}>No task selected</div>
@@ -63,6 +64,11 @@ export default function ConversationTimeline({ task, followups }: { task: any; f
           </div>
         )
       })}
+
+      {/* Artifacts workspace appears below the conversation */}
+      <div style={{ marginTop: 8 }}>
+        <ArtifactsWorkspace task={task} />
+      </div>
     </div>
   )
 }
