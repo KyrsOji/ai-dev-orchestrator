@@ -47,7 +47,24 @@ export default function TaskboardV2() {
 
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', borderLeft: '1px solid #eee', borderRight: '1px solid #eee' }}>
         <div style={{ padding: 12, borderBottom: '1px solid #eee' }}>
-          <h2>{selectedTask ? (selectedTask.title || selectedTask.taskId) : 'Conversation'}</h2>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <div style={{ flex: 1 }}>
+              <h2 style={{ margin: 0 }}>{selectedTask ? (selectedTask.title || selectedTask.taskId) : 'Conversation'}</h2>
+              <div style={{ marginTop: 6, fontSize: 13, color: '#6b7280' }}>
+                SDK Conversation · {selectedTask && selectedTask.taskId ? `Task ${selectedTask.taskId}` : ''}
+                {selectedTask && selectedTask.conversationId ? ` · Conversation ${selectedTask.conversationId}` : ''}
+                {selectedTask && selectedTask.rootTaskId ? ` · ROOT → ${selectedTask.rootTaskId}` : ''}
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <div style={{ fontSize: 12, color: '#6b7280' }}>Runner:</div>
+              <div style={{ fontWeight: 700 }}>{runnerStatus ? runnerStatus.status : 'unknown'}</div>
+
+              <div style={{ fontSize: 12, color: '#6b7280', marginLeft: 6 }}>Follow-ups:</div>
+              <div style={{ fontWeight: 700 }}>{followups ? followups.length : 0}</div>
+            </div>
+          </div>
         </div>
         <div style={{ flex: 1 }}>
           <ConversationPanel task={selectedTask} followups={followups} />
