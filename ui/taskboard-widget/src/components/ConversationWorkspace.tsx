@@ -4,6 +4,7 @@ import ConversationTimeline from './ConversationTimeline'
 import ConversationSessionChain from './ConversationSessionChain'
 import ConversationActionCard from './ConversationActionCard'
 import ConversationFollowupCard from './ConversationFollowupCard'
+import ConversationComposer from './ConversationComposer'
 
 const containerStyle: React.CSSProperties = {
   display: 'flex',
@@ -41,6 +42,13 @@ export default function ConversationWorkspace(props: any) {
       <div>
         <div style={{ fontWeight: 700, marginBottom: 8 }}>Follow-ups</div>
         <ConversationFollowupCard followup={{ title: 'Follow-up Suggested', reason: 'Verify Matrix approval path', description: 'Execution completed successfully' }} />
+        <ConversationComposer
+          placeholder="Write a note or update task..."
+          disabled={!task}
+          initialText={task && task.notes ? task.notes : ''}
+          onSubmit={props.onComposeSubmit}
+          sendLabel="Save Note"
+        />
       </div>
 
       <div>

@@ -1052,7 +1052,27 @@ function TaskDetail({
           })() : null}
         </div>
 
-        <ConversationWorkspace task={local} tasks={tasks} messages={messages} openTask={openTask} />
+        <ConversationWorkspace
+          task={local}
+          tasks={tasks}
+          messages={messages}
+          openTask={openTask}
+          onComposeSubmit={async (text: string) => {
+            // Compose submission: update local notes and persist using existing onSave handler
+            // This reuses TaskDetail's onSave prop when available; otherwise it's effectively a no-op.
+            try {
+              const updated = Object.assign({}, local || {}, { notes: text })
+              setLocal(updated)
+              await onSave(updated)
+              setToast({ type: 'success', message: 'Saved note' })
+              setTimeout(() => setToast({ type: null, message: null }), 3000)
+            } catch (e) {
+              console.error('Compose submit failed', e)
+              setToast({ type: 'error', message: 'Save failed' })
+              setTimeout(() => setToast({ type: null, message: null }), 3000)
+            }
+          }}
+        />
       </div>
     )
   }
