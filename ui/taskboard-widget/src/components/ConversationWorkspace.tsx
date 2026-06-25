@@ -1,7 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import ConversationHeader from './ConversationHeader'
 import ConversationTimeline from './ConversationTimeline'
-import ConversationSessionChain from './ConversationSessionChain'
 import ConversationActionCard from './ConversationActionCard'
 import ConversationFollowupCard from './ConversationFollowupCard'
 import ConversationComposer from './ConversationComposer'
@@ -63,54 +62,54 @@ export default function ConversationWorkspace(props: any) {
     }
   }, [])
 
+  // Build unified timeline events
+  const events: any[] = []
+
+  // Add messages (system/openhands/reviewer) from props
+  if (Array.isArray(messages)) {
+    const msgs = messages.slice().sort((a: any, b: any) => {
+      const ta = a && a.createdAt ? Date.parse(a.createdAt) : 0
+      const tb = b && b.createdAt ? Date.parse(b.createdAt) : 0
+      return ta - tb
+    })
+    msgs.forEach((m: any, i: number) => {
+      if (!m) return
+      if (m.author === 'system') events.push({ id: m.id || `system-${i}`, type: 'system', event: m })
+      else events.push({ id: m.id || `msg-${i}`, type: 'message', message: m })
+    })
+  }
+
+  // Reviewer summary as a message event
+  if (task && task.reviewerSummary) {
+    events.push({ id: `reviewer-summary-${task.taskId || Math.random()}`, type: 'message', message: { author: 'reviewer', createdAt: task.generatedAt || new Date().toISOString(), text: task.reviewerSummary } })
+  }
+
+  // Actions inline after reviewer summary
+  events.push({ id: `actions-${task && task.taskId ? task.taskId : 'na'}`, type: 'action', task })
+
+  // Follow-ups inline
+  if (Array.isArray(followups) && followups.length) {
+    followups.forEach((f: any, i: number) => {
+      events.push({ id: f.suggestionId || `followup-${i}`, type: 'followup', followup: f, createdAt: f.generatedAt || null })
+    })
+  }
+
+  // Notes as message events
+  if (task && task.notes) {
+    events.push({ id: `notes-${task.taskId || Math.random()}`, type: 'message', message: { author: 'note', createdAt: task.notesUpdatedAt || new Date().toISOString(), text: task.notes } })
+  }
+
   return (
-    <div className="conversation-workspace" style={containerStyle}>
-      <ConversationHeader task={task} />
-
-      <ConversationSessionChain task={task} tasks={tasks} openTask={openTask} />
-
-      <ConversationTimeline messages={messages || []} />
-
-      <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-        <div style={{ flex: 1, minWidth: 260 }}>
-          <div style={{ fontWeight: 700, marginBottom: 8 }}>Context</div>
-          <div style={{ padding: 8, borderRadius: 6, border: '1px solid #eef2ff', background: '#fbfbff' }}>
-            <div style={{ fontSize: 13, marginBottom: 6 }}><strong>Reviewer Summary</strong></div>
-            <div style={{ fontSize: 13 }}>{task && task.reviewerSummary ? task.reviewerSummary : '(none)'}</div>
-          </div>
-        </div>
-
-        <div style={{ width: 320 }}>
-          <div style={{ fontWeight: 700, marginBottom: 8 }}>Actions</div>
-          <ConversationActionCard task={task} />
-        </div>
+    <div className="conversation-workspace" style={{ ...containerStyle, height: 'calc(100vh - 40px)', display: 'flex', flexDirection: 'column' }}>
+      <div style={{ position: 'sticky', top: 0, zIndex: 5 }}>
+        <ConversationHeader task={task} tasks={tasks} openTask={openTask} />
       </div>
 
-      <div>
-        <div style={{ fontWeight: 700, marginBottom: 8 }}>Follow-ups</div>
-        {/** Follow-ups list fetched from backend (newest-first). */}
-        {loadingFollowups ? (
-          <div>Loading follow-ups...</div>
-        ) : followups.length === 0 ? (
-          <div>No staged follow-ups yet.</div>
-        ) : (
-          followups.map((f: any) => (
-            <div key={f.suggestionId || `${f.generatedAt}-${Math.random()}`} style={{ marginBottom: 8 }}>
-              <ConversationFollowupCard followup={{
-                suggestionId: f.suggestionId || null,
-                parentTaskId: f.parentTaskId || null,
-                conversationId: f.conversationId || null,
-                title: f.title || '',
-                description: f.description || '',
-                reason: f.reason || '',
-                decision: f.decision || 'pending',
-                published: !!f.published,
-                generatedAt: f.generatedAt || null,
-              }} />
-            </div>
-          ))
-        )}
+      <div style={{ flex: 1, overflowY: 'auto', paddingRight: 8 }}>
+        <ConversationTimeline events={events} />
+      </div>
 
+      <div style={{ marginTop: 8 }}>
         <ConversationComposer
           placeholder="Write a note or update task..."
           disabled={!task}
@@ -118,16 +117,6 @@ export default function ConversationWorkspace(props: any) {
           onSubmit={props.onComposeSubmit}
           sendLabel="Save Note"
         />
-      </div>
-
-      <div>
-        <div style={{ fontWeight: 700, marginBottom: 8 }}>Notes</div>
-        <div style={{ padding: 8, borderRadius: 6, border: '1px solid #eee', background: '#fff' }}>{task && task.notes ? task.notes : '(no notes)'}</div>
-      </div>
-
-      <div>
-        <div style={{ fontWeight: 700, marginBottom: 8 }}>Approval</div>
-        <div style={{ padding: 8, borderRadius: 6, border: '1px solid #eef2ff', background: '#f8fafc' }}>No approval actions wired yet</div>
       </div>
     </div>
   )
