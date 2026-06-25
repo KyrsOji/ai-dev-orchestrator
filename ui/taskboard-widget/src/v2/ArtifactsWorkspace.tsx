@@ -1,6 +1,8 @@
 import React, { useState } from 'react'
 import { safeText } from '../components/safeText'
 
+import ExecutionTimeline from './ExecutionTimeline'
+
 function escapeHtml(s: any) {
   if (s === null || s === undefined) return ''
   return String(s)
@@ -110,30 +112,8 @@ export default function ArtifactsWorkspace({ task }: { task: any }) {
         </div>
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-          <div className="card" style={{ padding: 12, borderRadius: 12, background: '#fff', boxShadow: '0 6px 18px rgba(2,6,23,0.04)', border: '1px solid #eef2ff' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-              <div style={{ fontWeight: 800 }}>⚙ Execution</div>
-              <div style={{ marginLeft: 'auto', fontSize: 13, color: '#6b7280' }}>{statusLabel}</div>
-            </div>
-
-            <div style={{ marginTop: 8 }}>
-              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                {rc !== null ? <div style={{ padding: '6px 10px', borderRadius: 999, background: '#f3f4f6', fontWeight: 700 }}>{`RC ${String(rc)}`}</div> : null}
-                <div style={{ padding: '6px 10px', borderRadius: 999, background: statusColor, color: '#fff', fontWeight: 700 }}>{statusLabel}</div>
-                {duration ? <div style={{ marginLeft: 'auto', color: '#6b7280' }}>{safeText(duration)}</div> : null}
-              </div>
-
-              <div style={{ marginTop: 12 }}>
-                {convId ? <div style={{ fontSize: 13, color: '#6b7280' }}>Conversation: <strong>{safeText(convId)}</strong></div> : null}
-                {runDir ? <div style={{ fontSize: 13, color: '#6b7280', marginTop: 6 }}>Run directory: <span style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, monospace' }}>{safeText(runDir)}</span></div> : null}
-                {resp ? (
-                  <div style={{ marginTop: 10 }}>
-                    <div style={{ fontWeight: 700, marginBottom: 6 }}>Response preview</div>
-                    <pre className="message-data" style={{ maxHeight: 180, overflow: 'auto' }}><code>{escapeHtml(typeof resp === 'string' ? resp : JSON.stringify(resp, null, 2))}</code></pre>
-                  </div>
-                ) : null}
-              </div>
-            </div>
+          <div>
+            <ExecutionTimeline exec={exec} task={task} />
           </div>
 
           <div className="card" style={{ padding: 12, borderRadius: 12, background: '#fff', boxShadow: '0 6px 18px rgba(2,6,23,0.04)', border: '1px solid #eef2ff' }}>
