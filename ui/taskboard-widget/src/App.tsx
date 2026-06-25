@@ -5,6 +5,7 @@ import { recommendAgent } from './agentRecommendation'
 
 
 import ConversationWorkspace from './components/ConversationWorkspace'
+import { safeText } from './components/safeText'
 
 declare global { interface Window { matrixWidgetApi?: any; MatrixWidgetApi?: any } }
 
@@ -2367,7 +2368,7 @@ export default function App() {
                     <div className="card-sub">
                       <span className="card-status">{t.status}</span>
                       <span className="card-reviewer">{(t.reviewerSummary || '').split('\n')[0]}</span>
-                      <span className="card-action">{(t.proposedActions.find(a => a.id === t.selectedAction)?.description) || (t.proposedActions[0]?.description) || ''}</span>
+                      <span className="card-action">{safeText((t.proposedActions.find((a: any) => a.id === t.selectedAction)?.description) || (t.proposedActions[0]?.description) || '')}</span>
                     </div>
                   </div>
                 ))}
@@ -2387,7 +2388,7 @@ export default function App() {
                     <div className="card-sub">
                       <span className="card-status">{t.status}</span>
                       <span className="card-reviewer">{(t.reviewerSummary || '').split('\n')[0]}</span>
-                      <span className="card-action">{(t.proposedActions.find(a => a.id === t.selectedAction)?.description) || (t.proposedActions[0]?.description) || ''}</span>
+                      <span className="card-action">{safeText((t.proposedActions.find((a: any) => a.id === t.selectedAction)?.description) || (t.proposedActions[0]?.description) || '')}</span>
                     </div>
                   </div>
                 ))}
@@ -2407,7 +2408,7 @@ export default function App() {
                     <div className="card-sub">
                       <span className="card-status">{t.status}</span>
                       <span className="card-reviewer">{(t.reviewerSummary || '').split('\n')[0]}</span>
-                      <span className="card-action">{(t.proposedActions.find(a => a.id === t.selectedAction)?.description) || (t.proposedActions[0]?.description) || ''}</span>
+                      <span className="card-action">{safeText((t.proposedActions.find((a: any) => a.id === t.selectedAction)?.description) || (t.proposedActions[0]?.description) || '')}</span>
                     </div>
                   </div>
                 ))}
