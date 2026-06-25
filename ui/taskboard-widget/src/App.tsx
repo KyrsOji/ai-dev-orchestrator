@@ -1083,7 +1083,7 @@ function TaskDetail({
     <div className="task-detail">
       <h2>{local.title}</h2>
       <div style={{ marginBottom: 8 }}>
-        <label style={{ display: 'block', fontSize: 12 }}>Task ID</label>
+        <label style={{ display: 'block', fontSize: 12 }}>Session ID</label>
         <input
           type="text"
           value={local.taskId || ''}
@@ -1091,7 +1091,7 @@ function TaskDetail({
           placeholder="e.g. PWA-DBWRITE-SMOKE-001"
           style={{ width: '100%', padding: 6 }}
         />
-        {!local.taskId ? <div style={{ color: '#b45309', marginTop: 6 }}>Task ID is required to approve actions.</div> : null}
+        {!local.taskId ? <div style={{ color: '#b45309', marginTop: 6 }}>Session ID is required to approve actions.</div> : null}
       </div>
 
       {/* connection/info */}
@@ -2145,9 +2145,9 @@ export default function App() {
     <div className="app">
       <header className="app-header">
         <div className="header-left" style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          <h1>Taskboard</h1>
+          <h1>Engineering Workspace</h1>
           <button className="small" onClick={() => createNewTask()} style={{ marginLeft: 8, background: '#3b82f6', color:'#fff', border: 'none' }}>
-            New Task
+            New Session
           </button>
         </div>
         <div className="header-right">
@@ -2239,8 +2239,8 @@ export default function App() {
             </div>
             <div className="threads-list">
               <div style={{ padding: '8px 12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <h3 style={{ margin: 0 }}>Active Tasks</h3>
-                <button className="small" onClick={() => { createNewTask(); }} style={{ padding: '6px 10px' }}>+ New Task</button>
+                <h3 style={{ margin: 0 }}>Active Sessions</h3>
+                <button className="small" onClick={() => { createNewTask(); }} style={{ padding: '6px 10px' }}>+ New Session</button>
               </div>
               {tasks.filter((t) => t.status !== 'completed').map((t) => (
                 <div key={t.taskId} className={'thread-item' + (selected === t.taskId ? ' selected' : '')} onClick={() => setSelected(t.taskId)}>

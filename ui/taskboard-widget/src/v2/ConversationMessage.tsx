@@ -195,6 +195,60 @@ export default function ConversationMessage({ event }: { event: Event }) {
   const summary = getField(exec, 'summary', 'summaryText')
   const taskId = getField(exec, 'taskId', 'task_id', 'id')
 
+  function prettyLabel(k: string) {
+    return String(k)
+      .replace(/([A-Z])/g, ' $1')
+      .replace(/_/g, ' ')
+      .replace(/\bmsg\b/ig, 'Message')
+      .replace(/\bresp\b/ig, 'Response')
+      .trim()
+  }
+
+  function renderEventCounts(obj: any) {
+    let data: any = obj
+    if (!data) return null
+    if (typeof data === 'string') {
+      try { data = JSON.parse(data) } catch { /* leave as-is */ }
+    }
+    if (typeof data !== 'object') return <div style={{ color: '#6b7280' }}>{String(data)}</div>
+    const entries = Object.entries(data)
+    if (!entries.length) return null
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6, minWidth: 0 }}>
+        {entries.map(([k, v]) => (
+          <div key={k} style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
+            <div style={{ color: '#374151' }}>{prettyLabel(k)}</div>
+            <div style={{ fontWeight: 700, color: '#111827' }}>{String(v)}</div>
+          </div>
+        ))}
+      </div>
+    )
+  }
+
+  function shortenId(s: string) {
+    if (!s) return ''
+    if (s.length <= 12) return s
+    return `${s.slice(0,8)}...${s.slice(-4)}`
+  }
+
+  function shortenPath(p: string) {
+    if (!p) return ''
+    if (p.length <= 32) return p
+    return `${p.slice(0,18)}...${p.slice(-12)}`
+  }
+
+  function formatDuration(d: any) {
+    if (d === undefined || d === null) return ''
+    const n = Number(String(d).replace(/[^0-9\.\-]/g, ''))
+    if (isNaN(n)) return String(d)
+    // if larger than 1000 assume milliseconds
+    if (n >= 1000) {
+      const s = Math.round(n / 1000)
+      return `${s} second${s === 1 ? '' : 's'}`
+    }
+    return `${n} ms`
+  }
+
   const statusColor = executionStatus === 'completed' ? '#10b981' : executionStatus === 'running' ? '#f59e0b' : executionStatus === 'failed' ? '#ef4444' : '#6b7280'
 
   const [open, setOpen] = useState(false)
@@ -224,7 +278,7 @@ export default function ConversationMessage({ event }: { event: Event }) {
                 <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
                   <div className="exec-icon" aria-hidden>⚙</div>
                   <div style={{ minWidth: 0 }}>
-                    <div style={{ fontWeight: 800 }}>{'SDK Execution'}{taskId ? ` · ${safeText(taskId)}` : ''}</div>
+                    <div style={{ fontWeight: 800 }}>{'Execution'}{taskId ? ` · ${safeText(taskId)}` : ''}</div>
                     {summary ? <div style={{ fontSize: 13, color: '#374151', marginTop: 4 }}>{safeText(summary)}</div> : null}
                   </div>
                 </div>
@@ -244,29 +298,35 @@ export default function ConversationMessage({ event }: { event: Event }) {
                 <div className="execution-grid">
                   {conversationId ? (
                     <div className="execution-field">
-                      <div className="field-label">Conversation</div>
-                      <div className="field-value">{safeText(conversationId)}</div>
+                      <div className="field-label">Engineering Conversation</div>
+                      <div className="field-value" style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                        <span title={conversationId} style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, monospace' }}>{shortenId(conversationId)}</span>
+                        <button className="small" onClick={() => { try { navigator.clipboard && navigator.clipboard.writeText(conversationId) } catch { } }}>Copy</button>
+                      </div>
                     </div>
                   ) : null}
 
                   {duration ? (
                     <div className="execution-field">
                       <div className="field-label">Duration</div>
-                      <div className="field-value">{safeText(duration)}</div>
+                      <div className="field-value">{formatDuration(duration)}</div>
                     </div>
                   ) : null}
 
                   {eventTypeCounts ? (
                     <div className="execution-field" style={{ flex: '1 1 100%' }}>
-                      <div className="field-label">Events</div>
-                      <div className="field-value"><pre style={{ margin: 0 }}><code>{escapeHtml(typeof eventTypeCounts === 'string' ? eventTypeCounts : JSON.stringify(eventTypeCounts))}</code></pre></div>
+                      <div className="field-label">Event Counts</div>
+                      <div className="field-value">{renderEventCounts(eventTypeCounts)}</div>
                     </div>
                   ) : null}
 
                   {runDirectory ? (
                     <div className="execution-field">
                       <div className="field-label">Run Directory</div>
-                      <div className="field-value">{safeText(runDirectory)}</div>
+                      <div className="field-value" style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                        <span title={runDirectory} style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, monospace' }}>{shortenPath(runDirectory)}</span>
+                        <button className="small" onClick={() => { try { navigator.clipboard && navigator.clipboard.writeText(runDirectory) } catch { } }}>Copy</button>
+                      </div>
                     </div>
                   ) : null}
                 </div>

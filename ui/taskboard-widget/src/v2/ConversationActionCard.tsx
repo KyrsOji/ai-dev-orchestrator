@@ -22,7 +22,7 @@ export default function ConversationActionCard({ task }: any) {
 
   return (
     <div style={{ padding: 12, borderRadius: 12, background: '#fff', border: '1px solid #eef2ff' }}>
-      <div style={{ fontWeight: 800, marginBottom: 8 }}>Recommended actions</div>
+      <div style={{ fontWeight: 800, marginBottom: 8 }}>Engineering Recommendations</div>
       <div style={{ color: '#374151', marginBottom: 10 }}>{recs.length} suggested</div>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>

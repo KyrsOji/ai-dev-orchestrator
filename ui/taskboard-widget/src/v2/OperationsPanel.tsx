@@ -10,7 +10,7 @@ export default function OperationsPanel({ runnerStatus, agents }: { runnerStatus
   return (
     <div style={{ padding: 8 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-        <div style={{ fontWeight: 700 }}>Operations</div>
+        <div style={{ fontWeight: 700 }}>System Health</div>
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
             <StatusBadge label={`Runner: ${runner}`} ok={runner === 'connected'} color={runner === 'connected' ? '#ecfeff' : undefined} />
