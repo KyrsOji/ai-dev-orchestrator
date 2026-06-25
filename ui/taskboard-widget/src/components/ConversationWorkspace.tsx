@@ -62,42 +62,98 @@ export default function ConversationWorkspace(props: any) {
     }
   }, [])
 
-  // Build unified timeline events
+  // Build unified timeline events with normalized timestamps (oldest-first)
   const events: any[] = []
+  let seq = 0
+  const parseTs = (s: any) => {
+    if (!s) return null
+    const t = Date.parse(String(s))
+    return Number.isFinite(t) ? t : null
+  }
 
-  // Add messages (system/openhands/reviewer) from props
+  // Collect candidate times to derive a deterministic fallback base
+  const candidateTimes: number[] = []
   if (Array.isArray(messages)) {
-    const msgs = messages.slice().sort((a: any, b: any) => {
-      const ta = a && a.createdAt ? Date.parse(a.createdAt) : 0
-      const tb = b && b.createdAt ? Date.parse(b.createdAt) : 0
-      return ta - tb
+    messages.forEach((m: any) => {
+      const t = parseTs(m && m.createdAt)
+      if (t) candidateTimes.push(t)
     })
-    msgs.forEach((m: any, i: number) => {
+  }
+  if (Array.isArray(followups)) {
+    followups.forEach((f: any) => {
+      const t = parseTs(f && f.generatedAt)
+      if (t) candidateTimes.push(t)
+    })
+  }
+  const taskTime = parseTs(task && (task.generatedAt || task.updatedAt || task.createdAt || task.notesUpdatedAt))
+  if (taskTime) candidateTimes.push(taskTime)
+
+  const baseTime = candidateTimes.length ? Math.min(...candidateTimes) : 0
+
+  function mkEvent(obj: any) {
+    seq += 1
+    obj.seq = seq
+    if (obj.ts === undefined || obj.ts === null) {
+      // deterministic fallback (base + seq * 1000ms)
+      obj.ts = baseTime + obj.seq * 1000
+    }
+    // ensure child objects that expect a createdAt have a stable value
+    try {
+      if (obj.type === 'message' && obj.message) {
+        if (!obj.message.createdAt) obj.message.createdAt = new Date(obj.ts).toISOString()
+      }
+      if (obj.type === 'system' && obj.event) {
+        if (!obj.event.createdAt) obj.event.createdAt = new Date(obj.ts).toISOString()
+      }
+      if (obj.type === 'followup' && obj.followup) {
+        if (!obj.followup.generatedAt) obj.followup.generatedAt = new Date(obj.ts).toISOString()
+      }
+    } catch (e) {
+      // ignore
+    }
+
+    events.push(obj)
+  }
+
+  // Messages
+  if (Array.isArray(messages)) {
+    messages.forEach((m: any, i: number) => {
       if (!m) return
-      if (m.author === 'system') events.push({ id: m.id || `system-${i}`, type: 'system', event: m })
-      else events.push({ id: m.id || `msg-${i}`, type: 'message', message: m })
+      const ts = parseTs(m.createdAt)
+      if (m.author === 'system') mkEvent({ id: m.id || `system-${i}`, type: 'system', event: m, ts })
+      else mkEvent({ id: m.id || `msg-${i}`, type: 'message', message: m, ts })
     })
   }
 
-  // Reviewer summary as a message event
+  // Reviewer summary
   if (task && task.reviewerSummary) {
-    events.push({ id: `reviewer-summary-${task.taskId || Math.random()}`, type: 'message', message: { author: 'reviewer', createdAt: task.generatedAt || new Date().toISOString(), text: task.reviewerSummary } })
+    const ts = parseTs(task.generatedAt) || parseTs(task.updatedAt) || parseTs(task.createdAt) || null
+    mkEvent({ id: `reviewer-summary-${task.taskId || Math.random()}`, type: 'message', message: { author: 'reviewer', createdAt: task.generatedAt || task.updatedAt || null, text: task.reviewerSummary }, ts })
   }
 
-  // Actions inline after reviewer summary
-  events.push({ id: `actions-${task && task.taskId ? task.taskId : 'na'}`, type: 'action', task })
+  // Actions
+  const actionsTs = parseTs(task && task.generatedAt) || parseTs(task && task.updatedAt) || null
+  mkEvent({ id: `actions-${task && task.taskId ? task.taskId : 'na'}`, type: 'action', task, ts: actionsTs })
 
-  // Follow-ups inline
+  // Follow-ups
   if (Array.isArray(followups) && followups.length) {
     followups.forEach((f: any, i: number) => {
-      events.push({ id: f.suggestionId || `followup-${i}`, type: 'followup', followup: f, createdAt: f.generatedAt || null })
+      const ts = parseTs(f.generatedAt)
+      mkEvent({ id: f.suggestionId || `followup-${i}`, type: 'followup', followup: f, ts })
     })
   }
 
-  // Notes as message events
+  // Notes
   if (task && task.notes) {
-    events.push({ id: `notes-${task.taskId || Math.random()}`, type: 'message', message: { author: 'note', createdAt: task.notesUpdatedAt || new Date().toISOString(), text: task.notes } })
+    const ts = parseTs(task.notesUpdatedAt) || parseTs(task.updatedAt) || parseTs(task.createdAt) || null
+    mkEvent({ id: `notes-${task.taskId || Math.random()}`, type: 'message', message: { author: 'note', createdAt: task.notesUpdatedAt || task.updatedAt || null, text: task.notes }, ts })
   }
+
+  // Sort oldest-first (by timestamp, then seq for stable tie-break)
+  const sortedEvents = events.slice().sort((a: any, b: any) => {
+    if (a.ts !== b.ts) return a.ts - b.ts
+    return a.seq - b.seq
+  })
 
   return (
     <div className="conversation-workspace" style={{ ...containerStyle, height: 'calc(100vh - 40px)', display: 'flex', flexDirection: 'column' }}>
@@ -106,7 +162,7 @@ export default function ConversationWorkspace(props: any) {
       </div>
 
       <div style={{ flex: 1, overflowY: 'auto', paddingRight: 8 }}>
-        <ConversationTimeline events={events} />
+        <ConversationTimeline events={sortedEvents} />
       </div>
 
       <div style={{ marginTop: 8 }}>
