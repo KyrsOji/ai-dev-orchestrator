@@ -271,8 +271,109 @@ app.get('/taskboard/api/tasks', async (req, res) => {
     console.log('Aggregator proxy failed, falling back to file (taskboard/api):', e && e.message ? e.message : e);
   }
 
-  const data = readData();
-  res.json(data);
+  // fallback to local file-based persistence and merge with any runner execution reports
+  const data = readData() || [];
+
+  const RUNNER_BASE_DIR = process.env.RUNNER_BASE_DIR || process.env.RUN_BASE || '/var/lib/ai-dev-runner/openhands-runs';
+  const runnerDir = RUNNER_BASE_DIR ? path.resolve(RUNNER_BASE_DIR) : null;
+  const syntheticTasks = [];
+
+  try {
+    if (runnerDir && fs.existsSync(runnerDir) && fs.statSync(runnerDir).isDirectory()) {
+      const entries = fs.readdirSync(runnerDir);
+      for (const entry of entries) {
+        try {
+          const execPath = path.join(runnerDir, entry, 'execution-report.json');
+          if (!fs.existsSync(execPath)) continue;
+          let report = null;
+          try { report = JSON.parse(fs.readFileSync(execPath, 'utf8')); } catch (e) { report = null }
+          if (!report) continue;
+
+          // normalize common id fields and conversation id
+          const taskId = report.taskId || report.task_id || report.id || entry || null;
+          const conversationId = report.conversationId || report.conversation_id || report.conversation || null;
+
+          // compute updatedAt using report fields or file mtime
+          let updatedAt = report.completedAt || report.updatedAt || report.updated_at || null;
+          try { const st = fs.statSync(execPath); if (st && st.mtime) updatedAt = updatedAt || st.mtime.toISOString(); } catch (e) {}
+          updatedAt = updatedAt || new Date().toISOString();
+
+          // If a stored task exists with both matching taskId and conversationId, attach the execution report (do not overwrite other metadata)
+          let attached = false;
+          if (taskId && conversationId) {
+            const idx = data.findIndex((t) => t && t.taskId === taskId && (t.conversationId === conversationId || t.conversation_id === conversationId));
+            if (idx >= 0) {
+              try { data[idx].executionReport = data[idx].executionReport || report; } catch (e) {}
+              attached = true;
+            }
+          }
+
+          if (!attached) {
+            const synthetic = {
+              taskId: taskId || genId('TASK-'),
+              title: (report.summary || report.title || (report.taskId || report.task_id) || String(taskId || '')).toString(),
+              status: report.status || report.executionStatus || report.state || 'completed',
+              conversationId: conversationId || null,
+              executionReport: report,
+              synthetic: true,
+              source: 'execution-report',
+              updatedAt: updatedAt
+            };
+            syntheticTasks.push(synthetic);
+          }
+        } catch (errEntry) {
+          // ignore single-run parse errors
+          console.warn('Failed to parse runner execution report for entry', entry, errEntry && errEntry.message ? errEntry.message : errEntry);
+        }
+      }
+    }
+  } catch (e) {
+    console.warn('Failed scanning RUNNER_BASE_DIR for execution reports', e && e.message ? e.message : e);
+  }
+
+  // Merge stored tasks with synthetic tasks, deduplicating by taskId::conversationId (prefer stored tasks when present)
+  const byKey = new Map();
+  function keyFor(t) {
+    if (!t) return '::';
+    const tid = t.taskId || '';
+    const cid = t.conversationId || t.conversation_id || '';
+    return `${tid}::${cid}`;
+  }
+  function timeFor(t) {
+    try {
+      if (!t) return 0;
+      const v = t.updatedAt || t.updated_at || (t.executionReport && (t.executionReport.completedAt || t.executionReport.updatedAt || t.executionReport.updated_at)) || null;
+      const n = v ? Date.parse(v) : 0;
+      return Number.isFinite(n) && !Number.isNaN(n) ? n : 0;
+    } catch (e) { return 0 }
+  }
+
+  // add stored tasks first
+  for (const t of (data || [])) {
+    const k = keyFor(t);
+    if (!byKey.has(k)) byKey.set(k, t);
+    else {
+      // if duplicate stored tasks, keep the newest
+      const existing = byKey.get(k);
+      if (timeFor(t) > timeFor(existing)) byKey.set(k, t);
+    }
+  }
+
+  // add synthetic tasks only if not present, or replace with newer
+  for (const s of syntheticTasks) {
+    const k = keyFor(s);
+    if (!byKey.has(k)) byKey.set(k, s);
+    else {
+      const existing = byKey.get(k);
+      if (timeFor(s) > timeFor(existing)) byKey.set(k, s);
+    }
+  }
+
+  const merged = Array.from(byKey.values());
+  // sort newest first
+  merged.sort((a, b) => timeFor(b) - timeFor(a));
+
+  res.json(merged);
 });
 
 app.post('/taskboard/api/task/save', (req, res) => {
