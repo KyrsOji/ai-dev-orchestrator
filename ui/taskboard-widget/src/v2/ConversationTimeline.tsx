@@ -17,10 +17,8 @@ export default function ConversationTimeline({ task, followups }: { task: any; f
   if (task.openhandsResponse) events.push({ id: 'evt-oh', type: 'result', text: safeText(task.openhandsResponse), ts: task.updatedAt || new Date().toISOString() })
   // Reviewer summary
   if (task.reviewerSummary) events.push({ id: 'evt-reviewer', type: 'reviewer', text: safeText(task.reviewerSummary), ts: task.updatedAt || new Date().toISOString() })
-  // Proposed actions (render with action card)
-  if (Array.isArray(task.proposedActions) && task.proposedActions.length) {
-    events.push({ id: 'evt-actions', type: 'action-card', task })
-  }
+  // Proposed actions (render with action card) - always render the action card even if no proposedActions
+  events.push({ id: 'evt-actions', type: 'action-card', task })
   // Followups: include any followups that reference this task id in suggestionId or taskId
   if (Array.isArray(followups)) {
     followups.forEach((f: any, i: number) => {

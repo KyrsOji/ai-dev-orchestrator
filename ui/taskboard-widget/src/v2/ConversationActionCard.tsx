@@ -2,13 +2,11 @@ import React, { useState } from 'react'
 import { safeText } from '../components/safeText'
 
 export default function ConversationActionCard({ task }: any) {
-  const initialRecs = task && Array.isArray(task.proposedActions) && task.proposedActions.length
+  // Use whatever proposedActions are present on the task, or an empty array.
+  // We want to render the action card even if there are no recommendations yet.
+  const initialRecs = task && Array.isArray(task.proposedActions)
     ? task.proposedActions
-    : [
-      'Verify Kafka',
-      'Update README',
-      'Run smoke'
-    ]
+    : []
 
   const [recs, setRecs] = useState<any[]>(initialRecs.slice())
   const [showForm, setShowForm] = useState(false)
@@ -28,7 +26,7 @@ export default function ConversationActionCard({ task }: any) {
     return safeText(a)
   }
 
-  function handleSaveCustom() {
+  function handleCreateRecommendation() {
     const newAction = {
       type: 'manual',
       id: 'custom-' + Date.now(),
@@ -49,21 +47,25 @@ export default function ConversationActionCard({ task }: any) {
       // ignore mutation errors in constrained environments
     }
 
-    // select the new action locally
+    // select the new recommendation locally
     setSelectedAction(newAction)
 
-    // reset form
+    // collapse editor and reset
     setShowForm(false)
     setDescription('')
     setInstructions('')
   }
 
   return (
-    <div style={{ padding: 12, borderRadius: 12, background: '#fff', border: '1px solid #eef2ff' }}>
-      <div style={{ fontWeight: 800, marginBottom: 8 }}>Engineering Recommendations</div>
-      <div style={{ color: '#374151', marginBottom: 10 }}>{recs.length} suggested</div>
+    <div style={{ padding: 16, borderRadius: 14, background: '#fff', border: '1px solid #eef2ff', boxShadow: '0 6px 18px #02061708' }}>
+      <div style={{ fontWeight: 900, marginBottom: 10, fontSize: 16 }}>Engineering Recommendations</div>
+      {recs.length ? (
+        <div style={{ color: '#374151', marginBottom: 12 }}>{recs.length} suggested</div>
+      ) : (
+        <div style={{ color: '#6b7280', marginBottom: 12 }}>No engineering recommendations have been created. Create one below or continue the conversation.</div>
+      )}
 
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
         {recs.map((r: any, i: number) => (
           <div
             key={i}
@@ -72,51 +74,72 @@ export default function ConversationActionCard({ task }: any) {
               alignItems: 'center',
               gap: 12,
               background: selectedAction === r ? '#eef2ff' : 'transparent',
-              padding: 6,
-              borderRadius: 8
+              padding: 8,
+              borderRadius: 10
             }}
             onClick={() => setSelectedAction(r)}
           >
-            <input aria-label={`select action ${i}`} type="checkbox" checked={selectedAction === r} readOnly />
+            <input aria-label={`select recommendation ${i}`} type="checkbox" checked={selectedAction === r} readOnly />
             <div style={{ flex: 1, fontWeight: 600 }}>{renderActionLabel(r)}</div>
-            <button className="small" onClick={(e) => { e.stopPropagation(); console.log('Run action', r) }}>Run</button>
+            <button className="small" onClick={(e) => { e.stopPropagation(); console.log('Run recommendation', r) }}>Run</button>
           </div>
         ))}
       </div>
 
-      {/* Inline custom action form toggle */}
-      {showForm ? (
-        <div style={{ marginTop: 12, padding: 10, borderRadius: 8, background: '#fafafa', border: '1px solid #f0f0f0' }}>
-          <div style={{ marginBottom: 8 }}>
-            <div style={{ fontWeight: 700, marginBottom: 6 }}>Custom Action</div>
-            <input
-              aria-label="custom description"
-              placeholder="Description"
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              style={{ width: '100%', padding: 8, borderRadius: 6, border: '1px solid #e6eefc', marginBottom: 8 }}
-            />
-            <textarea
-              aria-label="custom instructions"
-              placeholder="Instructions"
-              value={instructions}
-              onChange={(e) => setInstructions(e.target.value)}
-              style={{ width: '100%', padding: 8, borderRadius: 6, border: '1px solid #e6eefc', minHeight: 80 }}
-            />
-          </div>
-          <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
-            <button className="big" onClick={handleSaveCustom} style={{ background: '#10b981', color: '#fff', border: 'none' }}>Save</button>
-            <button className="big" onClick={() => setShowForm(false)} style={{ background: '#f3f4f6', border: 'none' }}>Cancel</button>
-          </div>
-        </div>
-      ) : (
-        <div style={{ marginTop: 12, display: 'flex', gap: 8 }}>
-          <button className="big" onClick={() => setShowForm(true)} style={{ background: '#ffffff', border: '1px dashed #cbd5e1' }}>+ Custom Action</button>
+      {/* Collapsed CTA */}
+      {!showForm && (
+        <div style={{ marginTop: 14, display: 'flex', gap: 8, alignItems: 'center' }}>
+          <button className="big" onClick={() => setShowForm(true)} style={{ background: '#ffffff', border: '1px dashed #cbd5e1', padding: '10px 14px', borderRadius: 10 }}>Create Recommendation</button>
           <div style={{ flex: 1 }} />
         </div>
       )}
 
-      <div style={{ display: 'flex', gap: 12, marginTop: 12 }}>
+      {/* Expanded editor */}
+      {showForm && (
+        <div style={{ marginTop: 14 }}>
+          <div style={{ padding: 12, borderRadius: 12, background: '#f8fafc', border: '1px solid #e6eefc' }}>
+            <div style={{ fontWeight: 800, marginBottom: 8, fontSize: 15 }}>Create Engineering Recommendation</div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <label style={{ fontSize: 13, fontWeight: 700 }}>Recommendation Title</label>
+              <input
+                aria-label="recommendation title"
+                placeholder="Short descriptive title"
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                style={{ width: '100%', padding: 10, borderRadius: 10, border: '1px solid #e6eefc', fontSize: 14 }}
+              />
+
+              <label style={{ fontSize: 13, fontWeight: 700, marginTop: 6 }}>Engineering Instructions</label>
+              <textarea
+                aria-label="engineering instructions"
+                placeholder={'Describe exactly what you want the engineering team to do.\nYou can override OpenHands recommendations.\n\nExamples:\n• Refactor reviewer/service.py\n• Add unit tests\n• Improve retry logic\n• Update documentation'}
+                value={instructions}
+                onChange={(e) => setInstructions(e.target.value)}
+                style={{ width: '100%', padding: 12, borderRadius: 10, border: '1px solid #e6eefc', minHeight: 110, fontSize: 14, lineHeight: '1.4' }}
+              />
+
+              <div style={{ color: '#6b7280', fontSize: 12, marginTop: 6, whiteSpace: 'pre-line' }}>
+                Describe exactly what you want the engineering team to do.
+                You can override OpenHands recommendations.
+
+                Examples:
+                • Refactor reviewer/service.py
+                • Add unit tests
+                • Improve retry logic
+                • Update documentation
+              </div>
+
+              <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
+                <button className="big" onClick={() => { setShowForm(false); setDescription(''); setInstructions('') }} style={{ background: '#f3f4f6', border: 'none', padding: '10px 14px', borderRadius: 10 }}>Cancel</button>
+                <button className="big" onClick={handleCreateRecommendation} style={{ background: '#3b82f6', color: '#fff', border: 'none', padding: '10px 14px', borderRadius: 10 }}>Create Recommendation</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div style={{ display: 'flex', gap: 12, marginTop: 14 }}>
         <button className="big" style={{ flex: 1, background: '#3b82f6', color: '#fff', border: 'none' }} onClick={() => console.log('Approve Selected')}>Approve Selected</button>
         <button className="big" style={{ flex: 1, background: '#ef4444', color: '#fff', border: 'none' }} onClick={() => console.log('Reject Selected')}>Reject</button>
       </div>
