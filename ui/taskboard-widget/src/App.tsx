@@ -4,6 +4,8 @@ import { WidgetApi } from 'matrix-widget-api'
 import { recommendAgent } from './agentRecommendation'
 
 
+import ConversationWorkspace from './components/ConversationWorkspace'
+
 declare global { interface Window { matrixWidgetApi?: any; MatrixWidgetApi?: any } }
 
 function uuid(prefix = '') {
@@ -1050,86 +1052,7 @@ function TaskDetail({
           })() : null}
         </div>
 
-        <div className="messages" ref={messagesRef} style={{ overflowY: 'auto', maxHeight: '60vh', padding: 12 }}>
-
-          {/* Session chain (read-only) */}
-          <div style={{ margin: '8px 0 12px 0' }}>
-            {renderSessionChainCard()}
-          </div>
-
-          {messages.map((m) => {
-            const timeStr = m.createdAt ? new Date(m.createdAt).toLocaleString() : ''
-            if (m.author === 'reviewer') {
-              return (
-                <div key={m.id} className="message-bubble reviewer" style={{ marginBottom: 12 }}>
-                  <div className="message-meta" style={{ fontSize: 12, color: '#666' }}>Reviewer · {timeStr}</div>
-                  <div className="message-text" style={{ marginTop: 6 }}>{m.text || 'Reviewer'}</div>
-                </div>
-              )
-
-
-            }
-            if (m.author === 'follow_up') {
-              const follow = (m.data && m.data.followUpTask) ? m.data.followUpTask : null
-              const taskIdStr = follow && follow.taskId ? follow.taskId : (typeof m.text === 'string' ? m.text : '(unknown)')
-              return (
-                <div key={m.id} className="message-bubble follow_up" style={{ marginBottom: 12 }}>
-                  <div className="message-meta" style={{ fontSize: 12, color: '#666' }}>Follow-up · {timeStr}</div>
-                  <div className="message-text" style={{ marginTop: 6 }}>Follow-up Task Created</div>
-                  <div style={{ marginTop: 8, display: 'flex', gap: 8, alignItems: 'center' }}>
-                    <div style={{ fontFamily: 'monospace', fontSize: 13 }}>{taskIdStr}</div>
-                    <button onClick={() => { if (openTask) openTask(taskIdStr) }}>Open</button>
-                  </div>
-                </div>
-              )
-            }
-
-            return (
-              <div key={m.id} className={`message-bubble ${m.author}`} style={{ marginBottom: 12 }}>
-                <div className="message-meta" style={{ fontSize: 12, color: '#666' }}>{m.author} · {timeStr}</div>
-                <div className="message-text" style={{ marginTop: 6 }}>{m.text}</div>
-                {m.data ? <pre className="message-data" style={{ background: '#f7fafc', padding: 8, marginTop: 8, borderRadius: 6 }}>{JSON.stringify(m.data, null, 2)}</pre> : null}
-              </div>
-            )
-          })}
-        </div>
-
-        <div className="composer" style={{ position: 'sticky', bottom: 0, background: '#fff', padding: 8, borderTop: '1px solid #eee' }}>
-          <textarea
-            value={composerText}
-            onChange={(e) => setComposerText((e.target as HTMLTextAreaElement).value)}
-            placeholder="Describe the task..."
-            style={{ width: '100%', height: 96, padding: 8, fontSize: 15 }}
-          />
-
-          <div style={{ marginBottom: 8 }}>
-            <label style={{ display: 'block', fontSize: 12 }}>Agent</label>
-            <select
-              value={(local.routing && local.routing.selectedAgentId) || AGENTS[0].id}
-              onChange={(e) => {
-                const sel = AGENTS.find(a => a.id === (e.target as HTMLSelectElement).value) || AGENTS[0]
-                update({ routing: { selectedAgentId: sel.id, selectedHostname: sel.hostname, selectedRole: sel.roles[0] } })
-              }}
-              style={{ width: '100%', padding: 6 }}
-            >
-              {AGENTS.map((a) => <option key={a.id} value={a.id}>{formatAgentDisplay(a)}</option>)}
-            </select>
-          </div>
-
-          <div style={{ marginBottom: 8 }}>
-            <label style={{ display: 'block', fontSize: 12 }}>Role</label>
-            <select value={(local.routing && local.routing.selectedRole) || (AGENTS.find(a => a.id === ((local.routing && local.routing.selectedAgentId) || AGENTS[0].id))?.roles?.[0])}
-              onChange={(e) => { update({ routing: { ...(local.routing || {}), selectedRole: (e.target as HTMLSelectElement).value } }) }}
-              style={{ width: '100%', padding: 6 }}>
-              {(AGENTS.find(a => a.id === ((local.routing && local.routing.selectedAgentId) || AGENTS[0].id)) || AGENTS[0]).roles.map((r) => <option key={r} value={r}>{r}</option>)}
-            </select>
-          </div>
-          <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
-            <button className="small" onClick={handleGetSecondOpinion} style={{ flex: 1 }}>Get 2nd Opinion</button>
-            <button className="small" onClick={handleSaveDraft} style={{ flex: 1 }}>Save Draft</button>
-            <button className="small" onClick={handleSubmitTask} style={{ flex: 1, background: '#10b981', color: '#fff', border: 'none' }}>Submit Task</button>
-          </div>
-        </div>
+        <ConversationWorkspace task={local} tasks={tasks} messages={messages} openTask={openTask} />
       </div>
     )
   }
