@@ -974,6 +974,18 @@ app.get('/taskboard/*', (req, res, next) => {
   res.sendFile(path.join(distPath, 'index.html'));
 });
 
+// Serve V2 shell under /taskboard-v2 using the same build artifacts.
+// index.html assets reference /taskboard/assets so we keep those asset paths intact.
+app.use('/taskboard-v2', express.static(distPath));
+app.get(['/taskboard-v2', '/taskboard-v2/'], (req, res) => {
+  res.sendFile(path.join(distPath, 'index.html'));
+});
+app.get('/taskboard-v2/*', (req, res, next) => {
+  // do not intercept API routes; forward if path looks like /taskboard/api/*
+  if (req.path.startsWith('/taskboard/api/')) return next();
+  res.sendFile(path.join(distPath, 'index.html'));
+});
+
 app.listen(port, () => {
   console.log('Server listening on port', port);
 });
