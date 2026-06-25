@@ -1,5 +1,7 @@
 import React from 'react'
 import ExecutionEvent from './ExecutionEvent'
+import ExecutionStatusPill from './ExecutionStatusPill'
+import { safeText } from '../components/safeText'
 
 function parseSummaryLines(summary: string) {
   if (!summary) return []
@@ -73,6 +75,25 @@ export default function ExecutionTimeline({ exec, task }: { exec?: any; task?: a
       <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
         <div style={{ fontWeight: 800 }}>⚙ Execution timeline</div>
         <div style={{ marginLeft: 'auto', color: '#6b7280', fontSize: 13 }}>{events.length} events</div>
+      </div>
+
+      {/* Summary row: status, return code, duration, conversation id */}
+      <div style={{ marginTop: 12, display: 'flex', gap: 12, alignItems: 'center' }}>
+        <ExecutionStatusPill status={e.status || e.executionStatus || e.state || (task && task.status)} />
+        { (e.returnCode || e.return_code || e.rc || e.returncode) !== undefined && (
+          <div className="exec-pill exec-pill-rc" style={{ marginLeft: 8 }}>{`RC ${String(e.returnCode || e.return_code || e.rc || e.returncode)}`}</div>
+        ) }
+        {(() => {
+          const dur = e.executionDurationSeconds || e.executionDuration || e.duration || e.elapsed || e.time
+          if (dur) return <div style={{ marginLeft: 8, color: '#6b7280' }}>{`Duration: ${String(dur)}`}</div>
+          if (e.startedAt && e.finishedAt) {
+            try { const d = (new Date(e.finishedAt).getTime() - new Date(e.startedAt).getTime())/1000; return <div style={{ marginLeft: 8, color: '#6b7280' }}>{`Duration: ${d}s`}</div> } catch { return null }
+          }
+          return null
+        })()}
+        { (task && (task.conversationId || null)) || e.conversationId || e.conversation_id ? (
+          <div style={{ marginLeft: 'auto', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, monospace', fontWeight: 700 }}>{safeText(task && (task.conversationId || e.conversationId || e.conversation_id))}</div>
+        ) : null }
       </div>
 
       <div style={{ marginTop: 12 }}>

@@ -33,7 +33,43 @@ export default function ConversationTimeline({ task, followups }: { task: any; f
 
   // Execution outputs (if present on task.executionReport or similar)
   if (task.executionReport) {
-    events.push({ id: 'evt-exec', type: 'execution', text: safeText(task.executionReport.summary || task.executionReport.stdout || task.executionReport.stderr || JSON.stringify(task.executionReport)), ts: task.executionReport.completedAt || task.updatedAt || new Date().toISOString(), data: task.executionReport })
+    const exec = task.executionReport
+    // Prefer explicit events array if provided by the runner
+    if (Array.isArray(exec.events) && exec.events.length) {
+      exec.events.forEach((ev: any, i: number) => {
+        const ts = ev.ts || ev.time || ev.createdAt || ev.t || ev.timestamp || exec.completedAt || task.updatedAt || new Date().toISOString()
+        const text = ev.title || ev.summary || ev.message || ev.text || JSON.stringify(ev)
+        events.push({ id: ev.id || `exec-${i}`, type: 'execution', text: safeText(text), ts, data: { ...exec, ...ev, _runner_marker: true } })
+      })
+    } else if (typeof exec.summary === 'string' && exec.summary.trim().length > 0) {
+      const lines = exec.summary.split(/\r?\n/).map((l: string) => l.trim()).filter(Boolean)
+      const base = exec.completedAt || exec.updatedAt || exec.startedAt || task && task.updatedAt || new Date().toISOString()
+      const baseMs = Date.parse(base as string) || Date.now()
+      const startMs = baseMs - Math.max(0, lines.length) * 1000
+      lines.forEach((ln: string, idx: number) => {
+        const ts = new Date(startMs + idx * 1000).toISOString()
+        events.push({ id: `exec-summary-${idx}`, type: 'execution', text: safeText(ln), ts, data: { ...exec, _runner_marker: true } })
+      })
+    } else {
+      // Derive from known timestamp fields (non-invasive)
+      const candidates: any[] = []
+      const pushIf = (k: any, title: string) => {
+        const t = exec[k]
+        if (t) candidates.push({ k, ts: t, title })
+      }
+      pushIf('createdAt', 'SDK Started')
+      pushIf('startedAt', 'Runner Started')
+      pushIf('executionStartedAt', 'Execution Running')
+      pushIf('completedAt', 'Execution Completed')
+      pushIf('publishedAt', 'Result Published')
+      pushIf('followupGeneratedAt', 'Follow-up Generated')
+      if (exec.summary) candidates.push({ k: 'summary', ts: exec.updatedAt || exec.completedAt || exec.createdAt || new Date().toISOString(), title: exec.summary })
+      if (candidates.length) {
+        candidates.forEach((c: any, i: number) => events.push({ id: c.k || `c-${i}`, type: 'execution', text: safeText(String(c.title)), ts: c.ts, data: { ...exec, _runner_marker: true } }))
+      } else {
+        events.push({ id: 'exec-unknown', type: 'execution', text: safeText(exec.summary || 'Execution'), ts: exec.completedAt || task.updatedAt || new Date().toISOString(), data: { ...exec, _runner_marker: true } })
+      }
+    }
   }
 
   events.sort((a, b) => new Date(a.ts).getTime() - new Date(b.ts).getTime())
