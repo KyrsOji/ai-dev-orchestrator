@@ -207,17 +207,39 @@ export default function ConversationActionCard({ task, onTaskUpdate, onRefresh }
                     routing: task && task.routing ? task.routing : null,
                   }
 
-                  // POST to backend dispatch endpoint
+                  // POST to decision endpoint (reuse existing review path)
                   try {
-                    const res = await fetch('/taskboard/api/task/dispatch', {
+                    const selectedActionForPayload = selectedObj || (task && task.selectedAction) || null
+                    const decisionPayload: any = {
+                      taskId: updatedTask.taskId,
+                      decision: 'approved',
+                      policy: (selectedActionForPayload && selectedActionForPayload.type) || null,
+                      selectedAction: selectedActionForPayload,
+                      editedAction: null,
+                      newAction: null,
+                      notes: null,
+                      source: 'taskboard-v2',
+                      createdAt: new Date().toISOString(),
+                    }
+
+                    const headers: any = { 'Content-Type': 'application/json' }
+                    let token: any = null
+                    try {
+                      if (typeof window !== 'undefined') {
+                        token = (window as any).__TASKBOARD_API_TOKEN || (window.localStorage ? window.localStorage.getItem('taskboard_standalone_token') : null)
+                      }
+                    } catch (e) { token = null }
+                    if (token) headers['Authorization'] = `Bearer ${token}`
+
+                    const res = await fetch('/taskboard/api/task/decision', {
                       method: 'POST',
-                      headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify(dispatchPayload),
+                      headers,
+                      body: JSON.stringify(decisionPayload),
                     })
 
                     if (!res.ok) {
                       const text = await res.text()
-                      throw new Error(`Dispatch failed: ${res.status} ${res.statusText} ${text}`)
+                      throw new Error(`Decision dispatch failed: ${res.status} ${res.statusText} ${text}`)
                     }
 
                     // Optionally refresh tasks if parent provided onRefresh
