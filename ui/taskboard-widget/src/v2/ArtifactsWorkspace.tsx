@@ -2,6 +2,7 @@ import React, { useState } from 'react'
 import { safeText } from '../components/safeText'
 
 import ExecutionTimeline from './ExecutionTimeline'
+import DiffViewer from './DiffViewer'
 
 function escapeHtml(s: any) {
   if (s === null || s === undefined) return ''
@@ -50,6 +51,7 @@ export default function ArtifactsWorkspace({ task }: { task: any }) {
     if (typeof f.patch === 'string') patch = f.patch
     else if (typeof f.diff === 'string') patch = f.diff
     else if (typeof f.unified_diff === 'string') patch = f.unified_diff
+    else if (typeof f.unifiedDiff === 'string') patch = f.unifiedDiff
     else if (typeof f.changes === 'string') patch = f.changes
     else if (typeof f.patch_text === 'string') patch = f.patch_text
     else if (f.hunks && Array.isArray(f.hunks)) patch = f.hunks.map((h: any) => h.patch || h.diff || h.text).filter(Boolean).join('\n') || null
@@ -129,12 +131,14 @@ export default function ArtifactsWorkspace({ task }: { task: any }) {
                     </div>
 
                     <div style={{ marginTop: 8 }}>
-                      <button className="small" onClick={() => toggleFile(path)} style={{ padding: '6px 10px', borderRadius: 8 }}>{expandedFiles[path] ? 'Hide' : 'View diff'}</button>
+                      <button className="small" onClick={() => toggleFile(path)} style={{ padding: '6px 10px', borderRadius: 8 }}>{expandedFiles[path] ? 'Hide Diff' : 'View Diff'}</button>
 
                       {expandedFiles[path] ? (
                         <div style={{ marginTop: 8 }}>
                           {patch ? (
-                            <pre className="message-data" style={{ margin: 0 }}><code>{escapeHtml(patch)}</code></pre>
+                            <div style={{ marginTop: 8 }}>
+                              <DiffViewer diff={patch} />
+                            </div>
                           ) : (
                             <div style={{ marginTop: 8, color: '#6b7280' }}>Diff unavailable</div>
                           )}

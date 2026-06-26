@@ -344,6 +344,15 @@ pre { white-space: pre-wrap; font-family: inherit; background: #fff; padding: 8p
 .execution-item-left { position: absolute; left: 0; top: 6px; width: 36px; display: flex; flex-direction: column; align-items: center; }
 .execution-dot { width: 12px; height: 12px; border-radius: 50%; background: #f59e0b; box-shadow: 0 6px 18px rgba(2,6,23,0.06); }
 .execution-line { width: 2px; flex: 1; background: #e6e6e6; margin-top: 6px; min-height: 18px; }
+
+/* Diff viewer styling */
+.diff-viewer { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, monospace; font-size: 13px; border-radius: 8px; overflow: auto; max-height: 420px; border: 1px solid #eef2ff; background: #fff; padding: 8px; }
+.diff-viewer .diff-line { padding: 2px 8px; white-space: pre; font-family: inherit; }
+.diff-viewer .diff-add { background: #ecfdf5; color: #065f46; }
+.diff-viewer .diff-del { background: #fff1f2; color: #991b1b; }
+.diff-viewer .diff-hunk { background: #f1f5f9; color: #111827; font-weight: 700; }
+.diff-viewer .diff-file-header { background: #f8fafc; color: #374151; font-weight: 700; }
+
 .execution-item-main { padding-left: 6px; }
 .execution-item .execution-item-main > div { min-height: 36px; }
 .execution-item-details { max-height: 0; overflow: hidden; opacity: 0; transition: max-height .32s ease, opacity .28s ease; }
