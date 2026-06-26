@@ -81,7 +81,6 @@ export default function ConversationActionCard({ task }: any) {
           >
             <input aria-label={`select recommendation ${i}`} type="checkbox" checked={selectedAction === r} readOnly />
             <div style={{ flex: 1, fontWeight: 600 }}>{renderActionLabel(r)}</div>
-            <button className="small" onClick={(e) => { e.stopPropagation(); console.log('Run recommendation', r) }}>Run</button>
           </div>
         ))}
       </div>
@@ -140,8 +139,12 @@ export default function ConversationActionCard({ task }: any) {
       )}
 
       <div style={{ display: 'flex', gap: 12, marginTop: 14 }}>
-        <button className="big" style={{ flex: 1, background: '#3b82f6', color: '#fff', border: 'none' }} onClick={() => console.log('Approve Selected')}>Approve Selected</button>
+        <button className="big" style={{ flex: 1, background: '#3b82f6', color: '#fff', border: 'none', opacity: selectedAction ? 1 : 0.6 }} onClick={() => console.log('Send to Engineering Team', selectedAction)} disabled={!selectedAction}>Send to Engineering Team</button>
         <button className="big" style={{ flex: 1, background: '#ef4444', color: '#fff', border: 'none' }} onClick={() => console.log('Reject Selected')}>Reject</button>
+      </div>
+
+      <div style={{ marginTop: 8, color: '#6b7280', fontSize: 12 }}>
+        This will approve the selected recommendation and send it for execution once backend wiring is enabled.
       </div>
     </div>
   )
