@@ -91,11 +91,11 @@ export default function ConversationPanel({ task, followups }: { task: any; foll
           <div className="modal" onClick={(e) => e.stopPropagation()}>
             {actionPreviewMode === 'choose' ? (
               <div>
-                <div style={{ fontWeight: 800, marginBottom: 8 }}>How would you like to use this message?</div>
+                <div style={{ fontWeight: 800, marginBottom: 8 }}>How should this message be used?</div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                   <button className="sheet-option" onClick={handleContinueConversation}>Continue Conversation</button>
                   <button className="sheet-option" onClick={() => setActionPreviewMode('create')}>Create Review Decision</button>
-                  <button className="sheet-option disabled">Execute Immediately</button>
+                  <button className="sheet-option disabled">Execute Immediately (coming soon)</button>
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 12 }}>
                   <button className="small" onClick={() => setActionModalOpen(false)}>Cancel</button>

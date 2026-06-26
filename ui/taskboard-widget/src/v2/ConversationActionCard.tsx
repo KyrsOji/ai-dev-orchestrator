@@ -80,7 +80,7 @@ export default function ConversationActionCard({ task }: any) {
       {recs.length ? (
         <div style={{ color: '#374151', marginBottom: 12 }}>{recs.length} suggested</div>
       ) : (
-        <div style={{ color: '#6b7280', marginBottom: 12 }}>No review decisions yet. Create a custom action or continue the conversation.</div>
+        <div style={{ color: '#6b7280', marginBottom: 12 }}>No review decisions yet. Use the composer below to create one or continue the conversation.</div>
       )}
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -106,7 +106,7 @@ export default function ConversationActionCard({ task }: any) {
       {/* Collapsed CTA */}
       {!showForm && (
         <div style={{ marginTop: 14, display: 'flex', gap: 8, alignItems: 'center' }}>
-          <button className="big" onClick={() => setShowForm(true)} style={{ background: '#ffffff', border: '1px dashed #cbd5e1', padding: '10px 14px', borderRadius: 10 }}>+ Custom Action</button>
+          <a href="#" onClick={(e) => { e.preventDefault(); setShowForm(true) }} style={{ fontSize: 13, color: '#6b7280', textDecoration: 'underline' }}>Advanced: add manually</a>
           <div style={{ flex: 1 }} />
         </div>
       )}
