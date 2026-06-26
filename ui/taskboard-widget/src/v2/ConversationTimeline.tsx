@@ -17,8 +17,8 @@ export default function ConversationTimeline({ task, followups }: { task: any; f
   if (task.openhandsResponse) events.push({ id: 'evt-oh', type: 'result', text: safeText(task.openhandsResponse), ts: task.updatedAt || new Date().toISOString() })
   // Reviewer summary
   if (task.reviewerSummary) events.push({ id: 'evt-reviewer', type: 'reviewer', text: safeText(task.reviewerSummary), ts: task.updatedAt || new Date().toISOString() })
-  // Proposed actions (render with action card) - always render the action card even if no proposedActions
-  events.push({ id: 'evt-actions', type: 'action-card', task })
+  // Proposed actions: action card rendering moved below artifacts workspace (rendered after ArtifactsWorkspace)
+
   // Followups: include any followups that reference this task id in suggestionId or taskId
   if (Array.isArray(followups)) {
     followups.forEach((f: any, i: number) => {
@@ -83,13 +83,6 @@ export default function ConversationTimeline({ task, followups }: { task: any; f
           )
         }
 
-        if (e.type === 'action-card') {
-          return (
-            <div key={e.id} style={{ marginBottom: 12 }}>
-              <ConversationActionCard task={e.task} />
-            </div>
-          )
-        }
 
         // default: render as a chat message
         return (
@@ -102,6 +95,11 @@ export default function ConversationTimeline({ task, followups }: { task: any; f
       {/* Artifacts workspace appears below the conversation */}
       <div style={{ marginTop: 8 }}>
         <ArtifactsWorkspace task={task} />
+      </div>
+
+      {/* Engineering recommendations (rendered separately, below artifacts and above composer) */}
+      <div style={{ marginTop: 12 }}>
+        <ConversationActionCard task={task} />
       </div>
     </div>
   )

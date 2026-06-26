@@ -58,7 +58,7 @@ export default function ConversationActionCard({ task }: any) {
 
   return (
     <div style={{ padding: 16, borderRadius: 14, background: '#fff', border: '1px solid #eef2ff', boxShadow: '0 6px 18px #02061708' }}>
-      <div style={{ fontWeight: 900, marginBottom: 10, fontSize: 16 }}>Engineering Recommendations</div>
+      <div style={{ fontWeight: 900, marginBottom: 10, fontSize: 16 }}>Review Decisions</div>
       {recs.length ? (
         <div style={{ color: '#374151', marginBottom: 12 }}>{recs.length} suggested</div>
       ) : (
@@ -88,7 +88,7 @@ export default function ConversationActionCard({ task }: any) {
       {/* Collapsed CTA */}
       {!showForm && (
         <div style={{ marginTop: 14, display: 'flex', gap: 8, alignItems: 'center' }}>
-          <button className="big" onClick={() => setShowForm(true)} style={{ background: '#ffffff', border: '1px dashed #cbd5e1', padding: '10px 14px', borderRadius: 10 }}>Create Recommendation</button>
+          <button className="big" onClick={() => setShowForm(true)} style={{ background: '#ffffff', border: '1px dashed #cbd5e1', padding: '10px 14px', borderRadius: 10 }}>+ Custom Action</button>
           <div style={{ flex: 1 }} />
         </div>
       )}
