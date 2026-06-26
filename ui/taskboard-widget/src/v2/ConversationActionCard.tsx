@@ -1,5 +1,6 @@
 import React, { useState } from 'react'
 import { safeText } from '../components/safeText'
+import { determineStage } from './lifecycle'
 
 export default function ConversationActionCard({ task }: any) {
   // Use whatever proposedActions are present on the task, or an empty array.
@@ -156,10 +157,37 @@ export default function ConversationActionCard({ task }: any) {
         </div>
       )}
 
-      <div style={{ display: 'flex', gap: 12, marginTop: 14 }}>
-        <button className="big" style={{ flex: 1, background: '#3b82f6', color: '#fff', border: 'none', opacity: selectedAction ? 1 : 0.6 }} onClick={() => console.log('Send to Engineering Team', selectedAction)} disabled={!selectedAction}>Send to Engineering Team</button>
-        <button className="big" style={{ flex: 1, background: '#ef4444', color: '#fff', border: 'none' }} onClick={() => console.log('Reject Selected')}>Reject</button>
-      </div>
+      {/* Action bar: show/hide based on lifecycle stage */}
+      {(() => {
+        const stage = determineStage(task)
+        if (stage === 'Conversation') return null
+
+        if (stage === 'Decision') {
+          return (
+            <div style={{ display: 'flex', gap: 12, marginTop: 14 }}>
+              <button className="big" style={{ flex: 1, background: '#10b981', color: '#fff', border: 'none' }} onClick={() => { try { if (task) task.status = 'approved' } catch (e) {} console.log('Approved (local only)') }}>Approve</button>
+              <button className="big" style={{ flex: 1, background: '#ef4444', color: '#fff', border: 'none' }} onClick={() => console.log('Reject Selected')}>Reject</button>
+            </div>
+          )
+        }
+
+        if (stage === 'Approved') {
+          return (
+            <div style={{ display: 'flex', gap: 12, marginTop: 14 }}>
+              <button className="big" style={{ flex: 1, background: '#3b82f6', color: '#fff', border: 'none' }} onClick={() => { try { if (task) task.dispatched = true } catch (e) {} console.log('Dispatch (local only)') }}>Dispatch to Engineering</button>
+              <button className="big" style={{ flex: 1, background: '#ef4444', color: '#fff', border: 'none' }} onClick={() => console.log('Reject Selected')}>Reject</button>
+            </div>
+          )
+        }
+
+        // default: show existing Send + Reject for other stages
+        return (
+          <div style={{ display: 'flex', gap: 12, marginTop: 14 }}>
+            <button className="big" style={{ flex: 1, background: '#3b82f6', color: '#fff', border: 'none', opacity: selectedAction ? 1 : 0.6 }} onClick={() => console.log('Send to Engineering Team', selectedAction)} disabled={!selectedAction}>Send to Engineering Team</button>
+            <button className="big" style={{ flex: 1, background: '#ef4444', color: '#fff', border: 'none' }} onClick={() => console.log('Reject Selected')}>Reject</button>
+          </div>
+        )
+      })()}
 
       <div style={{ marginTop: 8, color: '#6b7280', fontSize: 12 }}>
         This will approve the selected recommendation and send it for execution once backend wiring is enabled.

@@ -1,6 +1,8 @@
 import React, { useEffect, useState } from 'react'
 import ConversationList from './v2/ConversationList'
 import ConversationPanel from './v2/ConversationPanel'
+import LifecycleRibbon from './v2/LifecycleRibbon'
+
 import OperationsPanel from './v2/OperationsPanel'
 import { fetchTasks, fetchFollowups, fetchRunnerStatus, fetchAgents } from './v2/api'
 
@@ -65,7 +67,16 @@ export default function TaskboardV2() {
               <div style={{ fontWeight: 700 }}>{followups ? followups.length : 0}</div>
             </div>
           </div>
+
+          {/* Lifecycle ribbon -- immediately below the session title, above the conversation */}
+          {/* render the ribbon inside the header area so it stays visible */}
         </div>
+
+        {/* Lifecycle ribbon */}
+        <div>
+          <LifecycleRibbon task={selectedTask} />
+        </div>
+
         <div style={{ flex: 1 }}>
           <ConversationPanel task={selectedTask} followups={followups} />
         </div>
