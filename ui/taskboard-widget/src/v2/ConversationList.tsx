@@ -9,7 +9,7 @@ export default function ConversationList({ tasks, selectedId, onSelect }: { task
           <div style={{ fontWeight: 700 }}>{safeText(t.title) || t.taskId}</div>
           <div className="muted" style={{ marginTop: 6 }}>{safeText(t.reviewerSummary) || safeText(t.openhandsResponse)}</div>
         </div>
-      )) : (<div>No engineering sessions</div>)}
+      )) : (<div>No engineering sessions yet. Start engineering to begin.</div>)}
     </div>
   )
 }
