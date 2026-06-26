@@ -173,7 +173,11 @@ export default function TaskboardV2() {
           <button className="big" onClick={() => { setShowStartModal(true); setStartEngineerId(agents && agents[0] ? agents[0].id : null) }} style={{ width: '100%', background: '#3b82f6', color: '#fff', border: 'none', padding: 12, borderRadius: 10, fontWeight: 800, fontSize: 16 }}>＋ Start Engineering</button>
           <h2 style={{ marginTop: 12 }}>Engineering Sessions</h2>
         </div>
-        <ConversationList tasks={tasks} selectedId={selectedTask ? selectedTask.taskId : undefined} onSelect={(id) => setSelectedId(id)} />
+        {(!tasks || tasks.length === 0) ? (
+          <div style={{ padding: 12, color: '#6b7280' }}>No engineering sessions yet. Start engineering to begin.</div>
+        ) : (
+          <ConversationList tasks={tasks} selectedId={selectedTask ? selectedTask.taskId : undefined} onSelect={(id) => setSelectedId(id)} />
+        )}
       </div>
 
       {/* Start Engineering modal */}
