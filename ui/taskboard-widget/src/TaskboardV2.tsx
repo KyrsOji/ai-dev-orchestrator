@@ -142,7 +142,12 @@ export default function TaskboardV2() {
         </div>
 
         <div style={{ flex: 1 }}>
-          <ConversationPanel task={selectedTask} followups={followups} onTaskUpdate={handleTaskUpdate} />
+          <ConversationPanel task={selectedTask} followups={followups} onTaskUpdate={handleTaskUpdate} onRefresh={async () => {
+            try {
+              const t = await fetchTasks()
+              setTasks(Array.isArray(t) ? t : [])
+            } catch (e) { console.error('refresh tasks error', e) }
+          }} />
         </div>
       </div>
 

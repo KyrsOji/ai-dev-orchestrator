@@ -2,7 +2,8 @@ import React, { useState } from 'react'
 import { safeText } from '../components/safeText'
 import { determineStage } from './lifecycle'
 
-export default function ConversationActionCard({ task, onTaskUpdate }: any) {
+export default function ConversationActionCard({ task, onTaskUpdate, onRefresh }: any) {
+  const [localDispatchError, setLocalDispatchError] = useState<string | null>(null)
   // Use whatever proposedActions are present on the task, or an empty array.
   // We want to render the action card even if there are no recommendations yet.
   const initialRecs = task && Array.isArray(task.proposedActions)
@@ -194,18 +195,67 @@ export default function ConversationActionCard({ task, onTaskUpdate }: any) {
         if (stage === 'Approved') {
           return (
             <div style={{ display: 'flex', gap: 12, marginTop: 14 }}>
-              <button className="big" style={{ flex: 1, background: '#3b82f6', color: '#fff', border: 'none' }} onClick={() => {
-              try {
-                const base = task || {}
-                const updatedTask = { ...base, status: 'dispatched', dispatched: true, dispatchedAt: new Date().toISOString(), updatedAt: new Date().toISOString() }
-                if (typeof onTaskUpdate === 'function') {
-                  onTaskUpdate(updatedTask)
-                } else {
-                  try { if (task) { task.dispatched = true; task.status = 'dispatched' } } catch (e) {}
+              <button className="big" style={{ flex: 1, background: '#3b82f6', color: '#fff', border: 'none' }} onClick={async () => {
+                // Optimistic update: mark dispatched locally and persist via onTaskUpdate
+                try {
+                  const base = task || {}
+                  const updatedTask = { ...base, status: 'dispatched', dispatched: true, dispatchedAt: new Date().toISOString(), updatedAt: new Date().toISOString() }
+                  if (typeof onTaskUpdate === 'function') {
+                    onTaskUpdate(updatedTask)
+                  } else {
+                    try { if (task) { task.dispatched = true; task.status = 'dispatched' } } catch (e) {}
+                  }
+
+                  // Build dispatch payload
+                  let selectedObj: any = null
+                  try {
+                    if (task && task.selectedAction) {
+                      if (typeof task.selectedAction === 'string') {
+                        selectedObj = (Array.isArray(task.proposedActions) ? task.proposedActions.find((a: any) => a.id === task.selectedAction) : null) || null
+                      } else {
+                        selectedObj = task.selectedAction
+                      }
+                    }
+                  } catch (e) { selectedObj = null }
+
+                  const dispatchPayload: any = {
+                    taskId: updatedTask.taskId,
+                    selectedAction: selectedObj || task && task.selectedAction || null,
+                    instructions: (selectedObj && selectedObj.payload && selectedObj.payload.instructions) || null,
+                    routing: task && task.routing ? task.routing : null,
+                  }
+
+                  // POST to backend dispatch endpoint
+                  try {
+                    const res = await fetch('/taskboard/api/task/dispatch', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify(dispatchPayload),
+                    })
+
+                    if (!res.ok) {
+                      const text = await res.text()
+                      throw new Error(`Dispatch failed: ${res.status} ${res.statusText} ${text}`)
+                    }
+
+                    // Optionally refresh tasks if parent provided onRefresh
+                    try {
+                      if (typeof onRefresh === 'function') {
+                        await onRefresh()
+                      }
+                    } catch (e) {
+                      // ignore
+                    }
+                  } catch (e: any) {
+                    console.error('dispatch error', e)
+                    // non-blocking error: show small banner
+                    try { setLocalDispatchError(e && e.message ? String(e.message) : 'Dispatch failed') } catch (e) {}
+                    setTimeout(() => { try { setLocalDispatchError(null) } catch (e) {} }, 5000)
+                  }
+                } catch (e) {
+                  console.error('Dispatch handler error', e)
                 }
-              } catch (e) {}
-              console.log('Dispatch (local only)')
-            }}>Dispatch to Engineering</button>
+              }}>Dispatch to Engineering</button>
               <button className="big" style={{ flex: 1, background: '#ef4444', color: '#fff', border: 'none' }} onClick={() => console.log('Reject Selected')}>Reject</button>
             </div>
           )
@@ -219,6 +269,11 @@ export default function ConversationActionCard({ task, onTaskUpdate }: any) {
           </div>
         )
       })()}
+
+      {localDispatchError ? (
+        <div style={{ marginTop: 8, padding: 8, background: '#fee2e2', color: '#7f1d1d', borderRadius: 8 }}>{localDispatchError}</div>
+      ) : null}
+
 
       <div style={{ marginTop: 8, color: '#6b7280', fontSize: 12 }}>
         This will approve the selected recommendation and send it for execution once backend wiring is enabled.

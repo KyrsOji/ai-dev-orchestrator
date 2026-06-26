@@ -11,7 +11,7 @@ function getFirstSentence(text: string) {
   return s.split('\n')[0].trim()
 }
 
-export default function ConversationPanel({ task, followups, onTaskUpdate }: { task: any; followups?: any[]; onTaskUpdate?: (t: any) => void }) {
+export default function ConversationPanel({ task, followups, onTaskUpdate, onRefresh }: { task: any; followups?: any[]; onTaskUpdate?: (t: any) => void; onRefresh?: () => Promise<void> }) {
   const [localTask, setLocalTask] = useState<any>(task)
   const [actionModalOpen, setActionModalOpen] = useState(false)
   const [pendingMessage, setPendingMessage] = useState<string>('')
@@ -80,7 +80,7 @@ export default function ConversationPanel({ task, followups, onTaskUpdate }: { t
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
       <div style={{ flex: 1, overflow: 'auto', padding: 8 }}>
-        <ConversationTimeline task={localTask} followups={followups} onTaskUpdate={onTaskUpdate} />
+        <ConversationTimeline task={localTask} followups={followups} onTaskUpdate={onTaskUpdate} onRefresh={onRefresh} />
       </div>
 
       <div style={{ borderTop: '1px solid #eee' }}>
