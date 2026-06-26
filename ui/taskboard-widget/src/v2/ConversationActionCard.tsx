@@ -2,7 +2,7 @@ import React, { useState } from 'react'
 import { safeText } from '../components/safeText'
 import { determineStage } from './lifecycle'
 
-export default function ConversationActionCard({ task }: any) {
+export default function ConversationActionCard({ task, onTaskUpdate }: any) {
   // Use whatever proposedActions are present on the task, or an empty array.
   // We want to render the action card even if there are no recommendations yet.
   const initialRecs = task && Array.isArray(task.proposedActions)
@@ -53,21 +53,30 @@ export default function ConversationActionCard({ task }: any) {
       payload: { instructions }
     }
 
-    // update local UI state
-    setRecs([...recs, newAction])
+    // update local UI state immediately
+    setRecs((prev) => [...prev, newAction])
+    setSelectedAction(newAction)
 
-    // also append to the incoming task object locally (UI-only prototype)
     try {
-      if (task) {
+      const base = task || {}
+      const updatedTask = {
+        ...base,
+        proposedActions: [...(Array.isArray(base.proposedActions) ? base.proposedActions : []), newAction],
+        selectedAction: newAction.id,
+        updatedAt: new Date().toISOString()
+      }
+
+      if (typeof onTaskUpdate === 'function') {
+        onTaskUpdate(updatedTask)
+      } else if (task) {
+        // fallback: best-effort mutation
         if (!Array.isArray(task.proposedActions)) task.proposedActions = []
         task.proposedActions.push(newAction)
+        task.selectedAction = newAction.id
       }
     } catch (e) {
-      // ignore mutation errors in constrained environments
+      // ignore
     }
-
-    // select the new recommendation locally
-    setSelectedAction(newAction)
 
     // collapse editor and reset
     setShowForm(false)
@@ -107,7 +116,7 @@ export default function ConversationActionCard({ task }: any) {
       {/* Collapsed CTA */}
       {!showForm && (
         <div style={{ marginTop: 14, display: 'flex', gap: 8, alignItems: 'center' }}>
-          <a href="#" onClick={(e) => { e.preventDefault(); setShowForm(true) }} style={{ fontSize: 13, color: '#6b7280', textDecoration: 'underline' }}>Advanced: add manually</a>
+          <button className="small" onClick={() => setShowForm(true)} style={{ background: '#fff', border: '1px solid #e6eefc', padding: '6px 10px', borderRadius: 8, color: '#0f172a' }}>+ Custom Action</button>
           <div style={{ flex: 1 }} />
         </div>
       )}
@@ -165,7 +174,18 @@ export default function ConversationActionCard({ task }: any) {
         if (stage === 'Decision') {
           return (
             <div style={{ display: 'flex', gap: 12, marginTop: 14 }}>
-              <button className="big" style={{ flex: 1, background: '#10b981', color: '#fff', border: 'none' }} onClick={() => { try { if (task) task.status = 'approved' } catch (e) {} console.log('Approved (local only)') }}>Approve</button>
+              <button className="big" style={{ flex: 1, background: '#10b981', color: '#fff', border: 'none' }} onClick={() => {
+              try {
+                const base = task || {}
+                const updatedTask = { ...base, status: 'approved', decision: 'approved', updatedAt: new Date().toISOString() }
+                if (typeof onTaskUpdate === 'function') {
+                  onTaskUpdate(updatedTask)
+                } else {
+                  try { if (task) task.status = 'approved' } catch (e) {}
+                }
+              } catch (e) {}
+              console.log('Approved (local only)')
+            }}>Approve</button>
               <button className="big" style={{ flex: 1, background: '#ef4444', color: '#fff', border: 'none' }} onClick={() => console.log('Reject Selected')}>Reject</button>
             </div>
           )
@@ -174,7 +194,18 @@ export default function ConversationActionCard({ task }: any) {
         if (stage === 'Approved') {
           return (
             <div style={{ display: 'flex', gap: 12, marginTop: 14 }}>
-              <button className="big" style={{ flex: 1, background: '#3b82f6', color: '#fff', border: 'none' }} onClick={() => { try { if (task) task.dispatched = true } catch (e) {} console.log('Dispatch (local only)') }}>Dispatch to Engineering</button>
+              <button className="big" style={{ flex: 1, background: '#3b82f6', color: '#fff', border: 'none' }} onClick={() => {
+              try {
+                const base = task || {}
+                const updatedTask = { ...base, status: 'dispatched', dispatched: true, dispatchedAt: new Date().toISOString(), updatedAt: new Date().toISOString() }
+                if (typeof onTaskUpdate === 'function') {
+                  onTaskUpdate(updatedTask)
+                } else {
+                  try { if (task) { task.dispatched = true; task.status = 'dispatched' } } catch (e) {}
+                }
+              } catch (e) {}
+              console.log('Dispatch (local only)')
+            }}>Dispatch to Engineering</button>
               <button className="big" style={{ flex: 1, background: '#ef4444', color: '#fff', border: 'none' }} onClick={() => console.log('Reject Selected')}>Reject</button>
             </div>
           )

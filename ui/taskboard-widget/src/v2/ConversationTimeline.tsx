@@ -5,7 +5,7 @@ import ConversationFollowupCard from './ConversationFollowupCard'
 import ConversationActionCard from './ConversationActionCard'
 import ArtifactsWorkspace from './ArtifactsWorkspace'
 
-export default function ConversationTimeline({ task, followups }: { task: any; followups?: any[] }) {
+export default function ConversationTimeline({ task, followups, onTaskUpdate }: { task: any; followups?: any[]; onTaskUpdate?: (t: any) => void }) {
   if (!task) return <div style={{ padding: 16 }}>No task selected</div>
 
   const events: any[] = []
@@ -99,7 +99,7 @@ export default function ConversationTimeline({ task, followups }: { task: any; f
 
       {/* Engineering recommendations (rendered separately, below artifacts and above composer) */}
       <div style={{ marginTop: 12 }}>
-        <ConversationActionCard task={task} />
+        <ConversationActionCard task={task} onTaskUpdate={onTaskUpdate} />
       </div>
     </div>
   )

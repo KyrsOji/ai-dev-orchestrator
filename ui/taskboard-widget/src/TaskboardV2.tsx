@@ -40,6 +40,17 @@ export default function TaskboardV2() {
   const selectedTask = tasks.find((t) => t.taskId === selectedId) || (tasks.length ? tasks[0] : null)
   useEffect(() => { if (!selectedId && tasks.length) setSelectedId(tasks[0].taskId) }, [tasks])
 
+  function handleTaskUpdate(updatedTask: any) {
+    setTasks((prev) => {
+      const idx = prev.findIndex((t) => t && t.taskId === updatedTask.taskId)
+      if (idx === -1) return prev
+      const next = prev.slice()
+      next[idx] = updatedTask
+      return next
+    })
+  }
+
+
   return (
     <div style={{ display: 'flex', gap: 12, padding: 12, height: '100vh', boxSizing: 'border-box' }}>
       <div style={{ width: 320, overflow: 'auto' }}>
@@ -78,7 +89,7 @@ export default function TaskboardV2() {
         </div>
 
         <div style={{ flex: 1 }}>
-          <ConversationPanel task={selectedTask} followups={followups} />
+          <ConversationPanel task={selectedTask} followups={followups} onTaskUpdate={handleTaskUpdate} />
         </div>
       </div>
 

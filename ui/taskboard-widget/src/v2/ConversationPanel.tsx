@@ -11,7 +11,7 @@ function getFirstSentence(text: string) {
   return s.split('\n')[0].trim()
 }
 
-export default function ConversationPanel({ task, followups }: { task: any; followups?: any[] }) {
+export default function ConversationPanel({ task, followups, onTaskUpdate }: { task: any; followups?: any[]; onTaskUpdate?: (t: any) => void }) {
   const [localTask, setLocalTask] = useState<any>(task)
   const [actionModalOpen, setActionModalOpen] = useState(false)
   const [pendingMessage, setPendingMessage] = useState<string>('')
@@ -29,14 +29,16 @@ export default function ConversationPanel({ task, followups }: { task: any; foll
 
   function handleContinueConversation() {
     const text = pendingMessage
-    setLocalTask((prev: any) => {
-      if (!prev) return prev
-      const next = { ...prev }
-      const existing = next.notes ? String(next.notes) : ''
-      next.notes = existing ? existing + '\n' + text : text
-      next.notesUpdatedAt = new Date().toISOString()
-      return next
-    })
+    const base = localTask || task || {}
+    const updated = { ...base }
+    const existing = updated.notes ? String(updated.notes) : ''
+    updated.notes = existing ? existing + '\n' + text : text
+    updated.notesUpdatedAt = new Date().toISOString()
+    if (typeof onTaskUpdate === 'function') {
+      onTaskUpdate(updated)
+    } else {
+      setLocalTask(updated)
+    }
     setActionModalOpen(false)
     setPendingMessage('')
   }
@@ -51,14 +53,14 @@ export default function ConversationPanel({ task, followups }: { task: any; foll
       payload: { instructions: text }
     }
 
-    setLocalTask((prev: any) => {
-      if (!prev) return prev
-      const next = { ...prev }
-      if (!Array.isArray(next.proposedActions)) next.proposedActions = []
-      next.proposedActions = [...next.proposedActions, newAction]
-      next.selectedAction = newAction.id
-      return next
-    })
+    const base = localTask || task || {}
+    const updated = { ...base, proposedActions: [...(Array.isArray(base.proposedActions) ? base.proposedActions : []), newAction], selectedAction: newAction.id, updatedAt: new Date().toISOString() }
+
+    if (typeof onTaskUpdate === 'function') {
+      onTaskUpdate(updated)
+    } else {
+      setLocalTask(updated)
+    }
 
     setActionModalOpen(false)
     setPendingMessage('')
@@ -78,7 +80,7 @@ export default function ConversationPanel({ task, followups }: { task: any; foll
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
       <div style={{ flex: 1, overflow: 'auto', padding: 8 }}>
-        <ConversationTimeline task={localTask} followups={followups} />
+        <ConversationTimeline task={localTask} followups={followups} onTaskUpdate={onTaskUpdate} />
       </div>
 
       <div style={{ borderTop: '1px solid #eee' }}>
