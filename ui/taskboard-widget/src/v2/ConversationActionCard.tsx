@@ -58,26 +58,8 @@ export default function ConversationActionCard({ task, onTaskUpdate, onRefresh }
     setRecs((prev) => [...prev, newAction])
     setSelectedAction(newAction)
 
-    try {
-      const base = task || {}
-      const updatedTask = {
-        ...base,
-        proposedActions: [...(Array.isArray(base.proposedActions) ? base.proposedActions : []), newAction],
-        selectedAction: newAction.id,
-        updatedAt: new Date().toISOString()
-      }
-
-      if (typeof onTaskUpdate === 'function') {
-        onTaskUpdate(updatedTask)
-      } else if (task) {
-        // fallback: best-effort mutation
-        if (!Array.isArray(task.proposedActions)) task.proposedActions = []
-        task.proposedActions.push(newAction)
-        task.selectedAction = newAction.id
-      }
-    } catch (e) {
-      // ignore
-    }
+    // Update local UI-only state (do not call backend yet)
+    // The new action is appended to local recs and selected in the UI.
 
     // collapse editor and reset
     setShowForm(false)
