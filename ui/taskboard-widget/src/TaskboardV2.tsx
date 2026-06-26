@@ -40,6 +40,46 @@ export default function TaskboardV2() {
   const selectedTask = tasks.find((t) => t.taskId === selectedId) || (tasks.length ? tasks[0] : null)
   useEffect(() => { if (!selectedId && tasks.length) setSelectedId(tasks[0].taskId) }, [tasks])
 
+  // Presentational helper: time-ago
+  function timeAgoFromIso(iso: string | undefined | null) {
+    try {
+      if (!iso) return 'unknown'
+      const t = typeof iso === 'string' ? Date.parse(iso) : (iso instanceof Date ? iso.getTime() : NaN)
+      if (!t || Number.isNaN(t) || t <= 0) return 'unknown'
+      const sec = Math.floor((Date.now() - t) / 1000)
+      if (sec < 60) return `${sec} sec ago`
+      const m = Math.floor(sec / 60)
+      if (m < 60) return `${m} min ago`
+      const h = Math.floor(m / 60)
+      if (h < 24) return `${h} hour${h > 1 ? 's' : ''} ago`
+      const days = Math.floor(h / 24)
+      return `${days} day${days > 1 ? 's' : ''} ago`
+    } catch (e) { return 'unknown' }
+  }
+
+  // Compute header metadata from messages[] (preferred)
+  let headerEngineer = ''
+  let headerLastActivity = ''
+  if (selectedTask) {
+    // Engineer
+    try {
+      const agentId = selectedTask && selectedTask.routing && selectedTask.routing.selectedAgentId
+      const agentObj = agentId && agents ? agents.find((a) => a && (a.id === agentId || a.agentId === agentId)) : null
+      if (agentObj) headerEngineer = deriveFriendlyProfile(agentObj).name
+      else headerEngineer = (selectedTask && selectedTask.routing && (selectedTask.routing.selectedHostname || selectedTask.routing.selectedAgentId)) || ''
+    } catch (e) { headerEngineer = '' }
+
+    // Last activity from messages[] if present, else fallback to updatedAt
+    try {
+      if (Array.isArray(selectedTask.messages) && selectedTask.messages.length) {
+        const m = selectedTask.messages[selectedTask.messages.length - 1]
+        headerLastActivity = timeAgoFromIso(m && (m.createdAt || m.created_at) ? (m.createdAt || m.created_at) : selectedTask.updatedAt || selectedTask.updated_at)
+      } else {
+        headerLastActivity = timeAgoFromIso(selectedTask.updatedAt || selectedTask.updated_at)
+      }
+    } catch (e) { headerLastActivity = timeAgoFromIso(selectedTask.updatedAt || selectedTask.updated_at) }
+  }
+
   // Start Engineering modal state
   const [showStartModal, setShowStartModal] = useState(false)
   const [startEngineerId, setStartEngineerId] = useState<string | null>(null)
@@ -297,6 +337,11 @@ export default function TaskboardV2() {
                       newTask.messages.push({ id: uuid('msg-'), author: 'user', text: startObjective.trim(), createdAt: new Date().toISOString() })
                     }
 
+                    // If user chose to continue an existing conversation, attach that conversationId
+                    if (startConversationMode === 'continue' && startContinueConversationId) {
+                      newTask.conversationId = startContinueConversationId
+                    }
+
                     try {
                       await handleTaskUpdate(newTask)
                       setSelectedId(taskId)
@@ -331,9 +376,11 @@ export default function TaskboardV2() {
             <div style={{ flex: 1 }}>
               <h2 style={{ margin: 0 }}>{selectedTask ? (selectedTask.title || selectedTask.taskId) : 'Conversation'}</h2>
               <div style={{ marginTop: 6, fontSize: 13, color: '#6b7280' }}>
-                SDK Conversation · {selectedTask && selectedTask.taskId ? `Task ${selectedTask.taskId}` : ''}
-                {selectedTask && selectedTask.conversationId ? ` · Conversation ${selectedTask.conversationId}` : ''}
-                {selectedTask && selectedTask.rootTaskId ? ` · ROOT → ${selectedTask.rootTaskId}` : ''}
+                <div>SDK Conversation · {selectedTask && selectedTask.taskId ? `Task ${selectedTask.taskId}` : ''}{selectedTask && selectedTask.conversationId ? ` · Conversation ${selectedTask.conversationId}` : ''}{selectedTask && selectedTask.rootTaskId ? ` · ROOT → ${selectedTask.rootTaskId}` : ''}</div>
+                <div style={{ marginTop: 6, fontSize: 12, color: '#6b7280' }}>
+                  <span style={{ marginRight: 12 }}>Engineer: <strong style={{ fontWeight: 700 }}>{headerEngineer || 'Unknown'}</strong></span>
+                  <span>Last activity: <strong style={{ fontWeight: 700 }}>{headerLastActivity}</strong></span>
+                </div>
               </div>
             </div>
 

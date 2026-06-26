@@ -9,14 +9,26 @@ export default function ConversationTimeline({ task, followups, onTaskUpdate, on
   if (!task) return <div style={{ padding: 16 }}>No task selected</div>
 
   const events: any[] = []
-  // Task metadata / created
-  events.push({ id: 'evt-created', type: 'system', text: 'Task Created', ts: task.createdAt || task.updatedAt || new Date().toISOString() })
-  // Notes
-  if (task.notes) events.push({ id: 'evt-notes', type: 'user', text: safeText(task.notes), ts: task.updatedAt || new Date().toISOString() })
-  // OpenHands response
-  if (task.openhandsResponse) events.push({ id: 'evt-oh', type: 'result', text: safeText(task.openhandsResponse), ts: task.updatedAt || new Date().toISOString() })
-  // Reviewer summary
-  if (task.reviewerSummary) events.push({ id: 'evt-reviewer', type: 'reviewer', text: safeText(task.reviewerSummary), ts: task.updatedAt || new Date().toISOString() })
+
+  // If messages[] exists, prefer it as the canonical conversation stream.
+  if (Array.isArray(task.messages) && task.messages.length) {
+    task.messages.forEach((m: any, i: number) => {
+      const ts = m && (m.createdAt || m.created_at || m.ts || m.time) ? (m.createdAt || m.created_at || m.ts || m.time) : (m && m.t ? m.t : task.updatedAt || new Date().toISOString())
+      const text = (typeof m === 'string') ? safeText(m) : safeText(m && (m.text || m.message || m.body) ? (m.text || m.message || m.body) : JSON.stringify(m))
+      events.push({ id: (m && m.id) ? m.id : `msg-${i}`, type: 'message', text, ts, data: m })
+    })
+  } else {
+    // Task metadata / created (fallback)
+    events.push({ id: 'evt-created', type: 'system', text: 'Task Created', ts: task.createdAt || task.updatedAt || new Date().toISOString() })
+    // Legacy notes fallback
+    if (task.notes) events.push({ id: 'evt-notes', type: 'user', text: safeText(task.notes), ts: task.updatedAt || new Date().toISOString() })
+
+    // OpenHands response (legacy)
+    if (task.openhandsResponse) events.push({ id: 'evt-oh', type: 'result', text: safeText(task.openhandsResponse), ts: task.updatedAt || new Date().toISOString() })
+    // Reviewer summary (legacy)
+    if (task.reviewerSummary) events.push({ id: 'evt-reviewer', type: 'reviewer', text: safeText(task.reviewerSummary), ts: task.updatedAt || new Date().toISOString() })
+  }
+
   // Proposed actions: action card rendering moved below artifacts workspace (rendered after ArtifactsWorkspace)
 
   // Followups: include any followups that reference this task id in suggestionId or taskId

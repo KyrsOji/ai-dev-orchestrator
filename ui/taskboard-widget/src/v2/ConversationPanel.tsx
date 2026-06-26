@@ -27,13 +27,20 @@ export default function ConversationPanel({ task, followups, onTaskUpdate, onRef
     setActionModalOpen(true)
   }
 
+  function uuid(prefix = '') {
+    return prefix + Date.now().toString(36) + Math.random().toString(36).slice(2, 8)
+  }
+
   function handleContinueConversation() {
     const text = pendingMessage
     const base = localTask || task || {}
     const updated = { ...base }
-    const existing = updated.notes ? String(updated.notes) : ''
-    updated.notes = existing ? existing + '\n' + text : text
-    updated.notesUpdatedAt = new Date().toISOString()
+    // Preserve existing notes for backward compatibility; append message into messages[]
+    const existingMessages = Array.isArray(updated.messages) ? updated.messages.slice() : []
+    const msg = { id: uuid('msg-'), author: 'user', text: text, createdAt: new Date().toISOString() }
+    existingMessages.push(msg)
+    updated.messages = existingMessages
+    updated.updatedAt = new Date().toISOString()
     if (typeof onTaskUpdate === 'function') {
       onTaskUpdate(updated)
     } else {
