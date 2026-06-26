@@ -1662,10 +1662,57 @@ export default function App() {
   const [widgetInfo, setWidgetInfo] = useState<{ widgetId: string | null; parentUrl: string | null; roomId: string | null; connected: boolean; capabilitiesGranted: boolean }>({
     widgetId: null,
     parentUrl: null,
+
+
     roomId: null,
     connected: false,
     capabilitiesGranted: false,
   })
+
+  // Start Engineering modal state
+  const [showStartEngineering, setShowStartEngineering] = useState(false)
+  const [startEngineerId, setStartEngineerId] = useState<string | null>(null)
+  const [startObjective, setStartObjective] = useState('')
+  const [startSessionType, setStartSessionType] = useState('conversation') // 'conversation' | 'decision' | 'execute'
+  const [startConversationMode, setStartConversationMode] = useState('new') // 'new' | 'continue'
+  const [startContinueConversationId, setStartContinueConversationId] = useState<string | null>(null)
+
+  function deriveFriendlyProfile(agent: Agent) {
+    const id = (agent && (agent.agentId || agent.id)) || ''
+    const lower = id.toLowerCase()
+    const profile: any = { name: id, role: (agent.roles && agent.roles[0]) || 'Engineer', description: agent.hostname || '', emoji: '👩\u200D\uD83D\uDCBB' }
+    if (lower.includes('ofbiz') || lower.includes('openhands-ofbiz')) {
+      profile.name = 'Forge'
+      profile.role = 'Senior OFBiz Engineer'
+      profile.description = 'Optimized for enterprise ERP development.'
+      profile.emoji = '⚙'
+    } else if (lower.includes('java')) {
+      profile.name = 'Atlas'
+      profile.role = 'Platform Engineer'
+      profile.description = 'Platform and core services expert.'
+      profile.emoji = '🏛'
+    } else if (lower.includes('integration')) {
+      profile.name = 'Hermes'
+      profile.role = 'Integration Engineer'
+      profile.description = 'Systems integrator and connectors.'
+      profile.emoji = '🛰'
+    } else if (lower.includes('security')) {
+      profile.name = 'Sentinel'
+      profile.role = 'Security Engineer'
+      profile.description = 'Security and hardening expert.'
+      profile.emoji = '🛡'
+    } else if (lower.includes('docs')) {
+      profile.name = 'Scribe'
+      profile.role = 'Docs Engineer'
+      profile.description = 'Documentation and runbooks specialist.'
+      profile.emoji = '✍'
+    } else if (agent && agent.hostname) {
+      profile.name = id || agent.hostname
+      profile.description = `Host: ${agent.hostname}`
+    }
+    return profile
+  }
+
   const [devOpen, setDevOpen] = useState(false)
 
   // Standalone API token (stored in localStorage)
@@ -2146,8 +2193,8 @@ export default function App() {
       <header className="app-header">
         <div className="header-left" style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           <h1>Engineering Workspace</h1>
-          <button className="small" onClick={() => createNewTask()} style={{ marginLeft: 8, background: '#3b82f6', color:'#fff', border: 'none' }}>
-            New Session
+          <button className="small" onClick={() => setShowStartEngineering(true)} style={{ marginLeft: 8, background: '#3b82f6', color:'#fff', border: 'none' }}>
+            ＋ Start Engineering
           </button>
         </div>
         <div className="header-right">
@@ -2170,6 +2217,113 @@ export default function App() {
           </button>
         </div>
       </header>
+
+      {showStartEngineering ? (
+        <div className="modal-overlay" onClick={() => setShowStartEngineering(false)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 980 }}>
+            <h3 style={{ marginTop: 0 }}>Start Engineering</h3>
+            <div style={{ display: 'flex', gap: 12 }}>
+              <div style={{ flex: '0 0 420px' }}>
+                <div style={{ fontWeight: 800, marginBottom: 8 }}>Choose Primary Engineer</div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 360, overflow: 'auto' }}>
+                  {(agentsState || []).length ? (agentsState.map((a: Agent) => {
+                    const p: any = deriveFriendlyProfile(a)
+                    const isSelected = startEngineerId === a.id
+                    const availability = (!a.isFresh) ? 'Offline' : (a.status === 'idle' ? 'Available' : 'Busy')
+                    const currentSession = (tasks || []).find((t: any) => t.routing && (t.routing.selectedAgentId === a.id) && t.status !== 'completed')
+                    return (
+                      <div key={a.id} onClick={() => setStartEngineerId(a.id)} style={{ padding: 8, borderRadius: 8, border: isSelected ? '2px solid #3b82f6' : '1px solid #e6eefc', background: '#fff', cursor: 'pointer' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                            <div style={{ width: 36, height: 36, borderRadius: 999, background: '#eef2ff', display: 'flex', alignItems:'center', justifyContent:'center', fontSize: 18 }}>{p.emoji}</div>
+                            <div>
+                              <div style={{ fontWeight: 700 }}>{p.name}</div>
+                              <div style={{ fontSize: 13, color: '#6b7280' }}>{p.role}</div>
+                            </div>
+                          </div>
+                          <div style={{ textAlign: 'right', fontSize: 12 }}>
+                            <div style={{ fontWeight: 700 }}>{availability}</div>
+                            <div className="muted" style={{ fontSize: 12 }}>{a.hostname}</div>
+                          </div>
+                        </div>
+                        {currentSession ? <div style={{ marginTop: 8, fontSize: 13 }}><strong>Current Session:</strong> {currentSession.taskId}</div> : null}
+                        <div style={{ marginTop: 6, fontSize: 12, color: '#6b7280' }}>{p.description}</div>
+                      </div>
+                    )
+                  })) : <div>No agents available</div>}
+                </div>
+              </div>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontWeight: 800, marginBottom: 8 }}>Engineering Objective</div>
+                <textarea value={startObjective} onChange={(e) => setStartObjective((e.target as any).value)} placeholder="Describe what you want the engineering team to accomplish. Example: Investigate Kafka retry logic and propose fixes." style={{ width: '100%', minHeight: 120, padding: 8 }} />
+
+                <div style={{ marginTop: 12 }}>
+                  <div style={{ fontWeight: 800 }}>Session Type</div>
+                  <div style={{ display: 'flex', gap: 12, marginTop: 6 }}>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}><input type="radio" checked={startSessionType === 'conversation'} onChange={() => setStartSessionType('conversation')} /> Conversation First</label>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}><input type="radio" checked={startSessionType === 'decision'} onChange={() => setStartSessionType('decision')} /> Create Review Decision</label>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}><input type="radio" checked={startSessionType === 'execute'} onChange={() => setStartSessionType('execute')} /> Execute Immediately (coming soon)</label>
+                  </div>
+                </div>
+
+                <div style={{ marginTop: 12 }}>
+                  <div style={{ fontWeight: 800 }}>Conversation</div>
+                  <div style={{ display: 'flex', gap: 12, marginTop: 6 }}>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}><input type="radio" checked={startConversationMode === 'new'} onChange={() => setStartConversationMode('new')} /> Start New Conversation</label>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}><input type="radio" checked={startConversationMode === 'continue'} onChange={() => setStartConversationMode('continue')} /> Continue Existing Conversation</label>
+                  </div>
+                  {startConversationMode === 'continue' && startEngineerId ? (
+                    <div style={{ marginTop: 8 }}>
+                      <select value={startContinueConversationId || ''} onChange={(e) => setStartContinueConversationId((e.target as any).value)} style={{ width: '100%', padding: 8 }}>
+                        <option value=''>Select conversation</option>
+                        {(tasks || []).filter((t: any) => t.routing && (t.routing.selectedAgentId === startEngineerId) && t.conversationId).map((t: any) => (
+                          <option key={t.taskId} value={t.conversationId}>{t.conversationId} — {t.taskId}</option>
+                        ))}
+                      </select>
+                    </div>
+                  ) : null}
+
+                </div>
+
+                <div style={{ marginTop: 12, display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+                  <button className="small" onClick={() => setShowStartEngineering(false)}>Cancel</button>
+                  <button className="big" onClick={async () => {
+                    try {
+                      const chosen = (agentsState || []).find((x: Agent) => x.id === startEngineerId) || (agentsState || [])[0] || null
+                      const title = (startObjective && startObjective.trim().length) ? startObjective.trim().split('\n')[0].slice(0, 120) : `Engineering session${chosen ? ' · ' + (chosen.agentId || chosen.id || '') : ''}`
+                      const newTask = createNewTask(title)
+                      if (!newTask) return
+                      if (chosen) {
+                        newTask.routing = newTask.routing || {}
+                        newTask.routing.selectedAgentId = chosen.id
+                        newTask.routing.selectedHostname = chosen.hostname || null
+                        newTask.routing.selectedRole = (chosen.roles && chosen.roles[0]) || null
+                      }
+                      if (startConversationMode === 'continue' && startContinueConversationId) {
+                        newTask.conversationId = startContinueConversationId
+                      }
+                      const userMsg = { id: uuid('msg-'), author: 'user', text: startObjective || '', createdAt: new Date().toISOString() }
+                      newTask.messages = [userMsg].concat(newTask.messages || [])
+                      newTask.updatedAt = new Date().toISOString()
+                      await saveTask(newTask)
+                    } catch (e) {
+                      console.warn('Failed to create engineering session', e)
+                    } finally {
+                      setShowStartEngineering(false)
+                      setStartObjective('')
+                      setStartEngineerId(null)
+                      setStartContinueConversationId(null)
+                      setStartConversationMode('new')
+                      setStartSessionType('conversation')
+                    }
+                  }} style={{ background: '#3b82f6', color: '#fff', border: 'none' }}>Start Engineering</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       {devOpen ? (
         <div className="developer-info panel" style={{ marginBottom: 12 }}>
           <h4>Developer Info</h4>
@@ -2240,7 +2394,7 @@ export default function App() {
             <div className="threads-list">
               <div style={{ padding: '8px 12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <h3 style={{ margin: 0 }}>Active Sessions</h3>
-                <button className="small" onClick={() => { createNewTask(); }} style={{ padding: '6px 10px' }}>+ New Session</button>
+                <button className="small" onClick={() => { setShowStartEngineering(true); }} style={{ padding: '6px 10px' }}>＋ Start Engineering</button>
               </div>
               {tasks.filter((t) => t.status !== 'completed').map((t) => (
                 <div key={t.taskId} className={'thread-item' + (selected === t.taskId ? ' selected' : '')} onClick={() => setSelected(t.taskId)}>
