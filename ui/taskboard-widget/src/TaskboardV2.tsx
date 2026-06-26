@@ -189,29 +189,46 @@ export default function TaskboardV2() {
               <div style={{ flex: '0 0 320px' }}>
                 <div style={{ fontWeight: 800, marginBottom: 8 }}>Choose Primary Engineer</div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 360, overflow: 'auto' }}>
-                  {Array.isArray(agents) && agents.length ? agents.map((a: any) => {
-                    const p = deriveFriendlyProfile(a)
-                    const isSelected = startEngineerId === a.id
-                    const status = a.status || (a && a.isFresh === false ? 'offline' : 'unknown')
-                    return (
-                      <div key={a.id} onClick={() => setStartEngineerId(a.id)} style={{ padding: 10, borderRadius: 8, border: isSelected ? '2px solid #3b82f6' : '1px solid #e6eefc', background: '#fff', cursor: 'pointer' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                            <div style={{ width: 40, height: 40, borderRadius: 999, background: '#eef2ff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18 }}>{p.emoji}</div>
-                            <div>
-                              <div style={{ fontWeight: 700 }}>{p.name}</div>
+                  {!Array.isArray(agents) || agents.length === 0 ? (
+                    <div>No agents available</div>
+                  ) : (
+                    <>
+                      {agents.filter((a: any) => a.isFresh).length === 0 ? (
+                        <div style={{ padding: 8, background: '#fff7ed', borderRadius: 8, color: '#92400e', marginBottom: 8 }}>No engineering agents are currently online.</div>
+                      ) : null}
+                      {agents.map((a: any) => {
+                        const p = deriveFriendlyProfile(a)
+                        const isSelected = startEngineerId === a.id
+                        const available = !!a.isFresh
+                        const statusLabel = available ? 'Available' : (a.status || 'Offline')
+                        function timeAgoSeconds(sec: number | null) {
+                          if (typeof sec !== 'number' || sec === null) return 'unknown'
+                          if (sec < 60) return `${sec} sec ago`
+                          const m = Math.floor(sec / 60)
+                          if (m < 60) return `${m} min ago`
+                          const h = Math.floor(m / 60)
+                          if (h < 24) return `${h} hour${h > 1 ? 's' : ''} ago`
+                          const days = Math.floor(h / 24)
+                          return `${days} day${days > 1 ? 's' : ''} ago`
+                        }
+                        return (
+                          <div key={a.id || a.agentId} onClick={() => setStartEngineerId(a.id)} style={{ padding: 12, borderRadius: 8, border: isSelected ? '2px solid #3b82f6' : '1px solid #e6eefc', background: '#fff', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 12 }}>
+                            <div style={{ width: 56, height: 56, borderRadius: 999, background: '#eef2ff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 22 }}>{p.emoji}</div>
+                            <div style={{ flex: 1 }}>
+                              <div style={{ fontWeight: 800 }}>{p.name}</div>
                               <div style={{ fontSize: 13, color: '#6b7280' }}>{p.role}</div>
+                              <div style={{ marginTop: 8, display: 'flex', gap: 12, alignItems: 'center', fontSize: 13 }}>
+                                <div style={{ fontWeight: 700, color: available ? '#065f46' : '#b45309' }}>{statusLabel}</div>
+                                <div style={{ color: '#6b7280' }}><strong>Host</strong> {a.hostname}</div>
+                                <div style={{ color: '#6b7280' }}><strong>Heartbeat</strong> {timeAgoSeconds(a.freshnessSeconds)}</div>
+                              </div>
                             </div>
+                            <div style={{ textAlign: 'right', fontSize: 12, color: '#6b7280' }}>{a.agentId || a.id}</div>
                           </div>
-                          <div style={{ textAlign: 'right', fontSize: 12 }}>
-                            <div style={{ fontWeight: 700 }}>{status}</div>
-                            <div style={{ color: '#6b7280', fontSize: 12 }}>{a.agentId || a.id}</div>
-                          </div>
-                        </div>
-                        <div style={{ marginTop: 8, fontSize: 12, color: '#6b7280' }}>{p.description}</div>
-                      </div>
-                    )
-                  }) : (<div>No agents available</div>)}
+                        )
+                      })}
+                    </>
+                  )}
                 </div>
               </div>
 
