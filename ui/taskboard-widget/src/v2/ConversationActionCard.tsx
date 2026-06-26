@@ -62,7 +62,7 @@ export default function ConversationActionCard({ task }: any) {
       {recs.length ? (
         <div style={{ color: '#374151', marginBottom: 12 }}>{recs.length} suggested</div>
       ) : (
-        <div style={{ color: '#6b7280', marginBottom: 12 }}>No engineering recommendations have been created. Create one below or continue the conversation.</div>
+        <div style={{ color: '#6b7280', marginBottom: 12 }}>No review decisions yet. Create a custom action or continue the conversation.</div>
       )}
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
