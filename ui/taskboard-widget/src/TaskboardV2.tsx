@@ -40,14 +40,64 @@ export default function TaskboardV2() {
   const selectedTask = tasks.find((t) => t.taskId === selectedId) || (tasks.length ? tasks[0] : null)
   useEffect(() => { if (!selectedId && tasks.length) setSelectedId(tasks[0].taskId) }, [tasks])
 
-  function handleTaskUpdate(updatedTask: any) {
+  const [saveMessage, setSaveMessage] = useState<string | null>(null)
+
+  async function handleTaskUpdate(updatedTask: any) {
+    // optimistic local update: replace existing task or add if not present
     setTasks((prev) => {
       const idx = prev.findIndex((t) => t && t.taskId === updatedTask.taskId)
-      if (idx === -1) return prev
       const next = prev.slice()
-      next[idx] = updatedTask
+      if (idx === -1) {
+        // add to front so it is visible
+        next.unshift(updatedTask)
+      } else {
+        next[idx] = updatedTask
+      }
       return next
     })
+
+    // Fire-and-forget save to backend; keep UI optimistic regardless of save result
+    try {
+      // If task has no taskId, let server assign one (don't send taskId field)
+      let bodyToSend: any = { ...updatedTask }
+      if (!bodyToSend.taskId) {
+        // remove taskId if falsy to allow server to generate
+        delete bodyToSend.taskId
+      }
+
+      const res = await fetch('/taskboard/api/task/save', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(bodyToSend),
+      })
+
+      if (!res.ok) throw new Error(`Save failed: ${res.status} ${res.statusText}`)
+
+      const data = await res.json()
+
+      if (Array.isArray(data)) {
+        // Reconcile: put returned (stored) tasks first, then append any local-only tasks (synthetic) that aren't in returned data
+        setTasks((prev) => {
+          try {
+            const returned = data.slice()
+            const returnedIds = new Set(returned.map((t: any) => t.taskId))
+            // Append prev tasks that are not in returned data (keeps synthetic tasks)
+            for (const p of prev) {
+              if (!returnedIds.has(p.taskId)) returned.push(p)
+            }
+            return returned
+          } catch (e) {
+            return prev
+          }
+        })
+      }
+    } catch (e: any) {
+      console.error('task save error', e)
+      try {
+        setSaveMessage(e && e.message ? String(e.message) : 'Failed to save task')
+        setTimeout(() => setSaveMessage(null), 5000)
+      } catch (e) {}
+    }
   }
 
 
@@ -85,6 +135,9 @@ export default function TaskboardV2() {
 
         {/* Lifecycle ribbon */}
         <div>
+          {saveMessage ? (
+            <div style={{ padding: 8, background: '#fee2e2', color: '#7f1d1d', borderRadius: 8, marginBottom: 8 }}>{saveMessage}</div>
+          ) : null}
           <LifecycleRibbon task={selectedTask} />
         </div>
 
