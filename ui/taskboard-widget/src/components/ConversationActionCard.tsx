@@ -35,7 +35,7 @@ export default function ConversationActionCard({ task, onTaskUpdate }: any) {
         editedAction: null,
         newAction: null,
         notes: null,
-        source: 'taskboard-v2',
+        source: 'taskboard-standalone',
         createdAt: new Date().toISOString(),
       }
 

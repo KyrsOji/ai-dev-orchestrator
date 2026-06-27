@@ -187,7 +187,7 @@ export default function ConversationActionCard({ task, onTaskUpdate, onRefresh }
               editedAction: null,
               newAction: null,
               notes: null,
-              source: 'taskboard-v2',
+              source: 'taskboard-standalone',
               createdAt: new Date().toISOString(),
             }
 
@@ -245,7 +245,7 @@ export default function ConversationActionCard({ task, onTaskUpdate, onRefresh }
               editedAction: null,
               newAction: null,
               notes: notes || null,
-              source: 'taskboard-v2',
+              source: 'taskboard-standalone',
               createdAt: new Date().toISOString(),
             }
 
