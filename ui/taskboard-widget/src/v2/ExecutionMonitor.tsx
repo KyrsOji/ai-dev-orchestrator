@@ -13,6 +13,25 @@ function formatIso(iso: any) {
   } catch (e) { return String(iso) }
 }
 
+function formatDurationHuman(v: any) {
+  if (v === undefined || v === null) return ''
+  const raw = Number(String(v).replace(/[^0-9\.\-]/g, ''))
+  if (Number.isNaN(raw)) return String(v)
+  // If value looks like milliseconds (large), convert to seconds
+  let seconds = raw
+  if (raw > 100000) seconds = Math.round(raw / 1000)
+  // If value is plausibly seconds but fractional, round
+  seconds = Math.round(seconds)
+  const h = Math.floor(seconds / 3600)
+  const m = Math.floor((seconds % 3600) / 60)
+  const s = Math.floor(seconds % 60)
+  const parts: string[] = []
+  if (h) parts.push(`${h}h`)
+  if (m) parts.push(`${m}m`)
+  if (s || parts.length === 0) parts.push(`${s}s`)
+  return parts.join(' ')
+}
+
 function computePhaseFromTask(t: any) {
   if (!t) return 'Queued'
   const exec = t.executionReport || t.execution || t.execution_report || null
@@ -102,9 +121,37 @@ export default function ExecutionMonitor({ task }: { task: any }) {
   const phase = computePhaseFromTask(t)
   const lastActivity = t.lastActivityAt || t.updatedAt || t.updated_at || null
   const reviewer = t.reviewerSummary || t.approver || t.reviewer || t.decision || null
-  const runnerStatus = (runner && (runner.status || runner.state)) || null
+
+  // Normalize runner info: API may return array or object
+  let runnerObj: any = null
+  if (runner) {
+    if (Array.isArray(runner)) {
+      const agentId = t && t.routing && (t.routing.selectedAgentId || t.routing.selectedAgent)
+      runnerObj = (agentId && runner.find((r: any) => r && (r.agentId === agentId || r.id === agentId || r.hostname === agentId))) || runner[0]
+    } else {
+      runnerObj = runner
+    }
+  }
+
+  const runnerStatus = (runnerObj && (runnerObj.status || runnerObj.state)) || null
+  const runnerLastSeen = runnerObj && (runnerObj.lastSeen || runnerObj.last_seen || runnerObj.lastSeenAt || runnerObj.updatedAt || runnerObj.last_seen_at || null)
+
   const exec = t.executionReport || t.execution || t.execution_report || null
-  const duration = exec && (exec.executionDurationSeconds || exec.duration || exec.elapsed || exec.time) || null
+
+  // Prefer explicit execution duration; otherwise derive from timestamps
+  const durationRaw = exec && (exec.executionDurationSeconds || exec.duration || exec.elapsed || exec.time)
+  let elapsedFromTimestamps: number | null = null
+  try {
+    const started = exec && (exec.startedAt || exec.executionStartedAt || exec.execution_started_at || exec.startTime || exec.createdAt)
+    const finished = exec && (exec.completedAt || exec.finishedAt || exec.completed_at || exec.updatedAt)
+    if (started && finished) {
+      const s = new Date(started).getTime()
+      const f = new Date(finished).getTime()
+      if (!Number.isNaN(s) && !Number.isNaN(f) && f >= s) elapsedFromTimestamps = Math.round((f - s) / 1000)
+    }
+  } catch (e) { /* ignore */ }
+
+  const durationText = formatDurationHuman(durationRaw || elapsedFromTimestamps)
   const stdout = exec && (exec.stdout || exec.output || exec.response || exec.responsePreview || exec.response_preview) || null
   const stderr = exec && (exec.stderr || exec.errorOutput || null) || null
   const runDir = exec && (exec.runDirectory || exec.run_directory || exec.runDir) || null
@@ -120,6 +167,17 @@ export default function ExecutionMonitor({ task }: { task: any }) {
       if (r) setRunner(r)
       setPollTimedOut(false)
     } catch (e) {}
+  }
+
+  function copyToClipboard(text: string) {
+    try { if (typeof navigator !== 'undefined' && navigator.clipboard) navigator.clipboard.writeText(String(text)) } catch (e) {}
+  }
+
+  function shorten(s: any, len = 40) {
+    if (!s) return ''
+    const str = String(s)
+    if (str.length <= len) return str
+    return `${str.slice(0, Math.max(8, len - 12))}...${str.slice(-8)}`
   }
 
   return (
@@ -139,16 +197,27 @@ export default function ExecutionMonitor({ task }: { task: any }) {
           <div style={{ fontSize: 12, color: '#6b7280', marginLeft: 12 }}>Runner:</div>
           <div style={{ fontWeight: 700 }}>{runnerStatus || 'unknown'}</div>
 
-          <div style={{ fontSize: 12, color: '#6b7280', marginLeft: 12 }}>Kafka:</div>
-          <div style={{ fontWeight: 700 }}>{(runner && runner.kafka) ? String(runner.kafka) : 'unknown'}</div>
+          {runnerLastSeen ? (
+            <div style={{ fontSize: 12, color: '#6b7280', marginLeft: 12 }}>Runner update: <strong style={{ fontWeight: 700 }}>{formatIso(runnerLastSeen)}</strong></div>
+          ) : null}
 
-          {duration ? (
-            <div style={{ marginLeft: 12, fontSize: 12, color: '#6b7280' }}>Duration: <strong style={{ fontWeight: 700 }}>{String(duration)}</strong></div>
+          <div style={{ fontSize: 12, color: '#6b7280', marginLeft: 12 }}>Kafka:</div>
+          <div style={{ fontWeight: 700 }}>{(runnerObj && runnerObj.kafka) ? String(runnerObj.kafka) : 'unknown'}</div>
+
+          {durationText ? (
+            <div style={{ marginLeft: 12, fontSize: 12, color: '#6b7280' }}>Elapsed: <strong style={{ fontWeight: 700 }}>{durationText}</strong></div>
           ) : null}
         </div>
 
         {runDir ? (
-          <div style={{ fontSize: 12, color: '#6b7280' }}>Run dir: <code style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, monospace' }}>{String(runDir)}</code></div>
+          <div style={{ fontSize: 12, color: '#6b7280', display: 'flex', alignItems: 'center', gap: 8 }}>Run dir:
+            <code style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, monospace' }}>{shorten(runDir, 70)}</code>
+            {isWebUrl(runDir) ? (
+              <a className="small" href={String(runDir)} target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none' }} aria-label="Open logs in new tab">Open in new tab</a>
+            ) : (
+              <button className="small" onClick={() => copyToClipboard(runDir)} aria-label="Copy run directory">Copy path</button>
+            )}
+          </div>
         ) : null}
 
         {(stdout || stderr) ? (
@@ -159,28 +228,22 @@ export default function ExecutionMonitor({ task }: { task: any }) {
         ) : null}
 
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 6 }}>
-          {runDir ? (
-            isWebUrl(runDir) ? (
-              <a className="small" href={String(runDir)} target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none' }} aria-label="Open logs in new tab">View full logs</a>
-            ) : (
-              <button className="small" onClick={() => setShowDetails(true)} aria-label="Open execution details">Open execution details</button>
-            )
-          ) : null}
-
-          {!runDir ? (
-            <button className="small" onClick={() => setShowDetails(true)} aria-label="Open execution details">View execution details</button>
-          ) : null}
+          <button className="small" onClick={() => setShowDetails(true)} aria-label={exec ? 'Open execution details' : 'Open execution details (no execution report yet)'} title={exec ? 'Open execution details' : 'No execution report yet'}>Open execution details</button>
 
           {pollTimedOut && !exec ? (
             <div style={{ marginLeft: 'auto', color: '#374151', background: '#fff7ed', border: '1px solid #ffedd5', padding: 8, borderRadius: 6, fontSize: 13 }}>
-              Still waiting for runner results. <button className="small" onClick={() => doRefresh()} style={{ marginLeft: 8 }}>Refresh</button>
+              Polling timed out — no execution report received. <button className="small" onClick={() => doRefresh()} style={{ marginLeft: 8 }}>Refresh</button>
             </div>
           ) : null}
         </div>
 
-        {showDetails && exec ? (
+        {showDetails ? (
           <div style={{ marginTop: 8 }}>
-            <ExecutionDetailsDrawer exec={exec} />
+            {exec ? (
+              <ExecutionDetailsDrawer exec={exec} />
+            ) : (
+              <div style={{ padding: 8, borderRadius: 8, border: '1px solid #e6eefc', background: '#fff' }}>No execution report is available yet for this task.</div>
+            )}
             <div style={{ marginTop: 8 }}><button className="small" onClick={() => setShowDetails(false)} aria-label="Close execution details">Close</button></div>
           </div>
         ) : null}

@@ -246,21 +246,33 @@ export default function TaskboardV2() {
 
   return (
     <div style={{ display: 'flex', gap: 12, padding: 12, height: '100vh', boxSizing: 'border-box' }}>
-      <div id="left-panel" style={{ width: leftCollapsed ? 56 : 320, overflow: 'auto', transition: 'width 0.18s' }} aria-hidden={leftCollapsed} aria-label="Engineering sessions">
+      <div id="left-panel" style={{ width: leftCollapsed ? 56 : 320, overflow: 'hidden', transition: 'width 0.18s', display: 'flex', flexDirection: 'column' }} aria-label="Engineering sessions">
         <div style={{ padding: 12, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <div style={{ flex: 1 }}>
-            <button className="big" onClick={() => { setShowStartModal(true); setStartEngineerId(agents && agents[0] ? agents[0].id : null) }} style={{ width: '100%', background: '#3b82f6', color: '#fff', border: 'none', padding: 12, borderRadius: 10, fontWeight: 800, fontSize: 16 }}>＋ Start Engineering</button>
-            {!leftCollapsed ? <h2 style={{ marginTop: 12 }}>Engineering Sessions</h2> : null}
+          <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 8 }}>
+            {leftCollapsed ? (
+              <>
+                <button className="small" onClick={() => { setShowStartModal(true); setStartEngineerId(agents && agents[0] ? agents[0].id : null) }} style={{ padding: 8, borderRadius: 8, background: '#3b82f6', color: '#fff', border: 'none' }} title="Start engineering">＋</button>
+                <div style={{ fontSize: 13, color: '#6b7280', fontWeight: 700 }}>Sessions</div>
+              </>
+            ) : (
+              <>
+                <button className="big" onClick={() => { setShowStartModal(true); setStartEngineerId(agents && agents[0] ? agents[0].id : null) }} style={{ width: '100%', background: '#3b82f6', color: '#fff', border: 'none', padding: 12, borderRadius: 10, fontWeight: 800, fontSize: 16 }}>＋ Start Engineering</button>
+                <h2 style={{ marginTop: 12 }}>Engineering Sessions</h2>
+              </>
+            )}
           </div>
           <div style={{ marginLeft: 8 }}>
-            <button aria-label="Toggle sessions panel" aria-expanded={!leftCollapsed} aria-controls="left-panel" className="small" onClick={() => setLeftCollapsed(c => !c)} style={{ padding: 8, borderRadius: 8 }}>{leftCollapsed ? '▶' : '◀'}</button>
+            <button aria-label={leftCollapsed ? 'Expand sessions panel' : 'Collapse sessions panel'} title={leftCollapsed ? 'Expand sessions panel' : 'Collapse sessions panel'} aria-expanded={!leftCollapsed} aria-controls="left-panel-content" className="small" onClick={() => setLeftCollapsed(c => !c)} style={{ padding: 8, borderRadius: 8 }}>{leftCollapsed ? '▶' : '◀'}</button>
           </div>
         </div>
-        {(!tasks || tasks.length === 0) ? (
-          <div style={{ padding: 12, color: '#6b7280' }}>{leftCollapsed ? ' ' : 'No engineering sessions yet. Start engineering to begin.'}</div>
-        ) : (
-          <ConversationList tasks={tasks} selectedId={selectedTask ? selectedTask.taskId : undefined} onSelect={(id) => setSelectedId(id)} />
-        )}
+
+        <div id="left-panel-content" aria-hidden={leftCollapsed} style={{ display: leftCollapsed ? 'none' : 'block', overflow: 'auto' }}>
+          {(!tasks || tasks.length === 0) ? (
+            <div style={{ padding: 12, color: '#6b7280' }}>No engineering sessions yet. Start engineering to begin.</div>
+          ) : (
+            <ConversationList tasks={tasks} selectedId={selectedTask ? selectedTask.taskId : undefined} onSelect={(id) => setSelectedId(id)} />
+          )}
+        </div>
       </div>
 
       {/* Start Engineering modal */}
@@ -461,18 +473,21 @@ export default function TaskboardV2() {
         </div>
       </div>
 
-      <div id="right-panel" style={{ width: rightCollapsed ? 56 : 320, overflow: 'auto', padding: 12, transition: 'width 0.18s' }} aria-hidden={rightCollapsed} aria-label="Operations panel">
+      <div id="right-panel" style={{ width: rightCollapsed ? 56 : 320, overflow: 'hidden', padding: 12, transition: 'width 0.18s' }} aria-label="Operations panel">
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <h3 style={{ margin: 0 }}>{rightCollapsed ? '' : 'Operations'}</h3>
           <div>
-            <button aria-label="Toggle operations panel" aria-expanded={!rightCollapsed} aria-controls="right-panel" className="small" onClick={() => setRightCollapsed(c => !c)} style={{ padding: 8, borderRadius: 8 }}>{rightCollapsed ? '\u25c0' : '\u25b6'}</button>
+            <button aria-label={rightCollapsed ? 'Expand operations panel' : 'Collapse operations panel'} title={rightCollapsed ? 'Expand operations panel' : 'Collapse operations panel'} aria-expanded={!rightCollapsed} aria-controls="right-panel-content" className="small" onClick={() => setRightCollapsed(c => !c)} style={{ padding: 8, borderRadius: 8 }}>{rightCollapsed ? '\u25c0' : '\u25b6'}</button>
           </div>
         </div>
+
         {rightCollapsed ? (
           <div style={{ paddingTop: 12, textAlign: 'center', color: '#6b7280' }}>Ops</div>
-        ) : (
+        ) : null}
+
+        <div id="right-panel-content" aria-hidden={rightCollapsed} style={{ display: rightCollapsed ? 'none' : 'block' }}>
           <OperationsPanel runnerStatus={runnerStatus} agents={agents} />
-        )}
+        </div>
       </div>
     </div>
   )

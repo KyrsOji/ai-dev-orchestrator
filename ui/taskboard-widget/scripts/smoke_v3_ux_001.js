@@ -18,7 +18,7 @@ const { chromium } = require('playwright')
 
     // Check left panel collapse toggle
     const leftPanelWidthBefore = await page.$eval('#left-panel', (el) => window.getComputedStyle(el).width).catch(() => null)
-    const toggle = await page.$('button[aria-label="Toggle sessions panel"]')
+    const toggle = await page.$('button[aria-label*="sessions panel"]')
     let leftPanelWidthAfter = null
     if (toggle) {
       await toggle.click()
