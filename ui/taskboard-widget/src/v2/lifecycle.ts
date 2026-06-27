@@ -32,8 +32,7 @@ export function determineStage(task: any): string {
   // 2) Reviewer completed
   if (
     (task.reviewerSummary && String(task.reviewerSummary).trim().length > 0) ||
-    (task.reviewerDecision && String(task.reviewerDecision).toLowerCase() === 'approved') ||
-    (task.decision && String(task.decision).toLowerCase() === 'approved')
+    (task.reviewerDecision && String(task.reviewerDecision).toLowerCase() === 'approved')
   ) {
     return 'Reviewed'
   }

@@ -37,6 +37,18 @@ export default function ConversationActionCard({ task, onTaskUpdate, onRefresh }
     }
   }, [task && task.selectedAction, task && task.proposedActions])
 
+  // Helper: determine whether dispatch can be performed (UI-level check)
+  const canDispatch = (() => {
+    try {
+      if (selectedAction) return true
+      if (task && task.selectedAction) return true
+      if (Array.isArray(recs) && recs.length > 0) return true
+      if (task && Array.isArray(task.proposedActions) && task.proposedActions.length > 0) return true
+    } catch (e) {}
+    return false
+  })()
+
+
   function renderActionLabel(a: any) {
     if (a === null || a === undefined) return ''
     if (typeof a === 'string' || typeof a === 'number') return String(a)
@@ -96,10 +108,19 @@ export default function ConversationActionCard({ task, onTaskUpdate, onRefresh }
         {recs.map((r: any, i: number) => {
           const rid = (r && (r.id || String(i)))
           const selected = (() => {
-            if (!selectedAction) return false
-            if (typeof selectedAction === 'string') return selectedAction === rid
-            if (typeof selectedAction === 'object') return (selectedAction && selectedAction.id) === rid
-            return false
+            // Determine effective selected action id (use local selection if present, otherwise fallback to first recommendation)
+            let currentSelId: any = null
+            try {
+              if (selectedAction) {
+                if (typeof selectedAction === 'string') currentSelId = selectedAction
+                else if (typeof selectedAction === 'object') currentSelId = (selectedAction && selectedAction.id) || null
+              }
+            } catch (e) { currentSelId = null }
+            if (!currentSelId && Array.isArray(recs) && recs.length > 0) {
+              currentSelId = recs[0] && (recs[0].id || String(0))
+            }
+            if (!currentSelId) return false
+            return currentSelId === rid
           })()
 
           return (
@@ -197,7 +218,29 @@ export default function ConversationActionCard({ task, onTaskUpdate, onRefresh }
             setIsDispatching(true)
             try { setLocalDispatchError(null) } catch (e) {}
 
-            await dispatchDecision(task, selectedAction)
+            // Resolve candidate action to dispatch: prefer local selection, then task.selectedAction, then first recommendation
+            let candidate: any = null
+            try {
+              if (selectedAction) {
+                if (typeof selectedAction === 'string') {
+                  candidate = (Array.isArray(task && task.proposedActions) ? task.proposedActions.find((a: any) => a.id === selectedAction) : null) || selectedAction
+                } else {
+                  candidate = selectedAction
+                }
+              } else if (task && task.selectedAction) {
+                if (typeof task.selectedAction === 'string') {
+                  candidate = (Array.isArray(task.proposedActions) ? task.proposedActions.find((a: any) => a.id === task.selectedAction) : null) || task.selectedAction
+                } else {
+                  candidate = task.selectedAction
+                }
+              } else if (Array.isArray(recs) && recs.length > 0) {
+                candidate = recs[0]
+              } else if (Array.isArray(task && task.proposedActions) && task.proposedActions.length > 0) {
+                candidate = task.proposedActions[0]
+              }
+            } catch (e) { candidate = null }
+
+            await dispatchDecision(task, candidate)
 
             // Update task to dispatched on success
             try {
@@ -345,7 +388,7 @@ export default function ConversationActionCard({ task, onTaskUpdate, onRefresh }
         if (stage === 'Approved') {
           return (
             <div style={{ display: 'flex', gap: 12, marginTop: 14 }}>
-              <button className="big" style={{ flex: 1, background: '#3b82f6', color: '#fff', border: 'none' }} onClick={() => handleDispatch()} disabled={!selectedAction || isDispatching}>{isDispatching ? 'Dispatching...' : 'Dispatch to Engineering'}</button>
+              <button className="big" style={{ flex: 1, background: '#3b82f6', color: '#fff', border: 'none' }} onClick={() => handleDispatch()} disabled={!canDispatch || isDispatching}>{isDispatching ? 'Dispatching...' : 'Dispatch to Engineering'}</button>
               <button className="big" style={{ flex: 1, background: '#ef4444', color: '#fff', border: 'none' }} onClick={() => handleReject()}>Reject</button>
             </div>
           )
