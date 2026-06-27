@@ -1,7 +1,7 @@
 import React, { useState } from 'react'
 import { safeText } from '../components/safeText'
 import { determineStage } from './lifecycle'
-import { dispatchDecision } from './api'
+import { dispatchDecision, pollTaskUntilExecution } from './api'
 
 export default function ConversationActionCard({ task, onTaskUpdate, onRefresh }: any) {
   const [localDispatchError, setLocalDispatchError] = useState<string | null>(null)
@@ -17,6 +17,7 @@ export default function ConversationActionCard({ task, onTaskUpdate, onRefresh }
   const [instructions, setInstructions] = useState('')
   const [selectedAction, setSelectedAction] = useState<any>(null)
   const [isDispatching, setIsDispatching] = useState(false)
+  const [isPolling, setIsPolling] = useState(false)
 
   // Keep local recs in sync with incoming task prop (UI-only local state)
   React.useEffect(() => {
@@ -202,8 +203,23 @@ export default function ConversationActionCard({ task, onTaskUpdate, onRefresh }
               }
             } catch (e) {}
 
-            // optionally refresh
+            // optionally refresh once immediately
             try { if (typeof onRefresh === 'function') await onRefresh() } catch (e) {}
+
+            // Start bounded polling for execution report: poll every 2s up to 60s
+            setIsPolling(true)
+            try {
+              const updated = await pollTaskUntilExecution(task && task.taskId, { intervalMs: 2000, timeoutMs: 60000 })
+              if (updated) {
+                if (typeof onTaskUpdate === 'function') onTaskUpdate(updated)
+              } else {
+                try { setLocalDispatchError('No execution evidence observed within 60 seconds') } catch (e) {}
+              }
+            } catch (e) {
+              console.error('polling error', e)
+            } finally {
+              setIsPolling(false)
+            }
 
           } catch (e: any) {
             console.error('dispatch error', e)
@@ -314,6 +330,23 @@ export default function ConversationActionCard({ task, onTaskUpdate, onRefresh }
           </div>
         )
       })()}
+
+      {/* Status / dispatch progress */}
+      {(isDispatching || isPolling || (task && (task.dispatched || task.status || task.executionReport))) ? (
+        <div style={{ marginTop: 8, padding: 8, borderRadius: 8, background: isDispatching ? '#f0f9ff' : (isPolling ? '#f0f9ff' : (task && task.executionReport ? '#ecfdf5' : '#fff7ed')), color: isDispatching ? '#0c4a6e' : (isPolling ? '#0c4a6e' : (task && task.executionReport && (task.executionReport.status === 'completed' || task.executionReport.status === 'success') ? '#065f46' : '#92400e')) }}>
+          {isDispatching ? (
+            'Dispatching...'
+          ) : isPolling ? (
+            'Dispatched — waiting for runner (polling)'
+          ) : (task && task.executionReport) ? (
+            (task.executionReport.status ? String(task.executionReport.status).charAt(0).toUpperCase() + String(task.executionReport.status).slice(1) : 'Completed')
+          ) : (task && task.dispatched) ? (
+            'Dispatched'
+          ) : (task && task.status) ? (
+            String(task.status).charAt(0).toUpperCase() + String(task.status).slice(1)
+          ) : null}
+        </div>
+      ) : null}
 
       {localDispatchError ? (
         <div style={{ marginTop: 8, padding: 8, background: '#fee2e2', color: '#7f1d1d', borderRadius: 8 }}>{localDispatchError}</div>

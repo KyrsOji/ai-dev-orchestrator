@@ -137,3 +137,28 @@ export async function dispatchDecision(task: any, selectedAction?: any) {
   return await postDecision(decisionPayload)
 }
 
+
+export async function pollTaskUntilExecution(taskId: string | null, opts: { intervalMs?: number; timeoutMs?: number } = {}) {
+  const intervalMs = opts.intervalMs || 2000
+  const timeoutMs = opts.timeoutMs || 60000
+  if (!taskId) return null
+  const start = Date.now()
+  const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
+  while (Date.now() - start < timeoutMs) {
+    try {
+      const tasks = await fetchTasks()
+      if (Array.isArray(tasks)) {
+        const t = tasks.find((x: any) => x && x.taskId === taskId)
+        if (t) {
+          const exec = t.executionReport || t.execution || t.execution_report || null
+          const hasExec = !!exec || (t.status && ['running', 'completed', 'failed'].includes(String(t.status)))
+          if (hasExec) return t
+        }
+      }
+    } catch (e) {
+      // ignore transient errors and continue polling
+    }
+    await sleep(intervalMs)
+  }
+  return null
+}
