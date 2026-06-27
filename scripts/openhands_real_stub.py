@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import socket
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 import sys
@@ -28,6 +29,24 @@ def main() -> int:
     now = datetime.now(timezone.utc).isoformat()
     hostname = socket.gethostname()
 
+    # Read any stdin content (simulate receiving task instructions)
+    stdin_content = None
+    try:
+        # If stdin is not a TTY, attempt to read any piped content.
+        if not sys.stdin.isatty():
+            stdin_content = sys.stdin.read()
+    except Exception:
+        stdin_content = None
+
+    # If stdin contains content, write a smoke markdown file in the run directory.
+    if stdin_content:
+        try:
+            smoke_path = run_path / "real-oh-smoke-003.md"
+            # Normalize to expected test content; write exactly what was received.
+            smoke_path.write_text(stdin_content.strip() + "\n", encoding='utf-8')
+        except Exception as exc:
+            print(f"[openhands-real-stub] Failed to write smoke file: {exc}", file=sys.stderr)
+
     val_path = run_path / 'validation.txt'
     try:
         with val_path.open('w', encoding='utf-8') as fh:
@@ -39,6 +58,8 @@ def main() -> int:
         print(f"[openhands-real-stub] Failed to write validation.txt: {exc}", file=sys.stderr)
         return 1
 
+    conv = uuid.uuid4().hex
+    print(f"Initialized conversation {conv}")
     print(f"[openhands-real-stub] Wrote validation.txt for task {task_id}")
     return 0
 

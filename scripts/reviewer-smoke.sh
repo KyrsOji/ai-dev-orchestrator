@@ -95,10 +95,10 @@ else
   echo "[smoke][FAIL] Docs classification not ready_to_commit"; FAIL=$((FAIL+1))
 fi
 
-# 2) secrets -> unsafe -> publish ai.dev.approval.request
+# 2) secrets -> unsafe -> publish ai.dev.approval.required
 out=$(run_reviewer "$R_SECRETS")
 if echo "$out" | grep -q '"classification": "unsafe"'; then
-  if echo "$out" | grep -q '\[KAFKA-PUBLISH\].*ai.dev.approval.request'; then
+  if echo "$out" | grep -q '\[KAFKA-PUBLISH\].*ai.dev.approval.required'; then
     echo "[smoke] Secrets classified unsafe and published approval request - OK"
     PASS=$((PASS+1))
   else
@@ -108,10 +108,10 @@ else
   echo "[smoke][FAIL] Secrets classification not unsafe"; FAIL=$((FAIL+1))
 fi
 
-# 3) commit -> requires_human_approval -> publish ai.dev.approval.request
+# 3) commit -> requires_human_approval -> publish ai.dev.approval.required
 out=$(run_reviewer "$R_COMMIT")
 if echo "$out" | grep -q '"classification": "requires_human_approval"'; then
-  if echo "$out" | grep -q '\[KAFKA-PUBLISH\].*ai.dev.approval.request'; then
+  if echo "$out" | grep -q '\[KAFKA-PUBLISH\].*ai.dev.approval.required'; then
     echo "[smoke] Commit requires_human_approval and published approval request - OK"
     PASS=$((PASS+1))
   else
@@ -121,10 +121,10 @@ else
   echo "[smoke][FAIL] Commit classification not requires_human_approval"; FAIL=$((FAIL+1))
 fi
 
-# 4) deploy -> requires_human_approval -> publish ai.dev.approval.request
+# 4) deploy -> requires_human_approval -> publish ai.dev.approval.required
 out=$(run_reviewer "$R_DEPLOY")
 if echo "$out" | grep -q '"classification": "requires_human_approval"'; then
-  if echo "$out" | grep -q '\[KAFKA-PUBLISH\].*ai.dev.approval.request'; then
+  if echo "$out" | grep -q '\[KAFKA-PUBLISH\].*ai.dev.approval.required'; then
     echo "[smoke] Deploy requires_human_approval and published approval request - OK"
     PASS=$((PASS+1))
   else

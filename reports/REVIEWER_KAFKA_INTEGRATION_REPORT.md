@@ -5,7 +5,7 @@ This report documents the changes made to allow the reviewer to use real Kafka t
 What was added
 - reviewer/kafka_client.py: small CLI-first Kafka client with kafka-python fallback. Honors KAFKA_BOOTSTRAP and KAFKA_CLIENT_CONFIG.
 - reviewer/service.py: replaced the internal KafkaMock with KafkaClient integration; added --consume-topic support to consume one message from a Kafka topic.
-- scripts/reviewer-kafka-smoke.sh: smoke test that publishes sample results to ai.dev.result.out, runs the reviewer to consume them and checks for expected publishes to ai.dev.task.ofbiz and ai.dev.approval.request.
+- scripts/reviewer-kafka-smoke.sh: smoke test that publishes sample results to ai.dev.result.out, runs the reviewer to consume them and checks for expected publishes to ai.dev.task.ofbiz and ai.dev.approval.required.
 - reports/REVIEWER_KAFKA_INTEGRATION_REPORT.md (this file)
 
 Design notes

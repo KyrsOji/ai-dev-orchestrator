@@ -1,0 +1,51 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="700">
+  <style>
+    .bg { fill: #f3f4f6 }
+    .panel { fill: #fff; stroke: #e6e7ea; stroke-width:1 }
+    .header { font: 700 20px sans-serif; fill: #0f172a }
+    .muted { font: 400 14px sans-serif; fill: #374151 }
+    .card-title { font: 700 14px sans-serif; fill: #0f172a }
+    .button { fill: #10b981; stroke: #10b981 }
+    .badge { fill: #eef2ff; stroke: #dbeafe }
+  </style>
+  <rect class="bg" x="0" y="0" width="1200" height="700"/>
+  <rect class="panel" x="20" y="20" width="360" height="660" rx="8"/>
+  <rect class="panel" x="400" y="20" width="760" height="660" rx="8"/>
+
+  <text class="header" x="420" y="50">Conversation Workspace (Inspector)</text>
+  <text class="muted" x="420" y="74">Conversation Timeline & Context - Shell UI only</text>
+
+  <!-- Timeline -->
+  <rect class="panel" x="420" y="90" width="740" height="280" rx="6"/>
+  <text class="card-title" x="436" y="116">Timeline</text>
+  <rect x="436" y="130" width="700" height="40" rx="6" fill="#fbfbff" stroke="#eef2ff"/>
+  <text class="muted" x="448" y="156">Reviewer · 2026-06-24 12:00</text>
+  <text class="muted" x="448" y="176">Review: Looks good. Suggested README update.</text>
+
+  <rect x="436" y="180" width="700" height="40" rx="6" fill="#fff" stroke="#eef2ff"/>
+  <text class="muted" x="448" y="206">OpenHands · 2026-06-24 12:02</text>
+  <text class="muted" x="448" y="226">README updated.</text>
+
+  <!-- Context -->
+  <rect class="panel" x="420" y="380" width="360" height="140" rx="6"/>
+  <text class="card-title" x="436" y="404">Context</text>
+  <text class="muted" x="436" y="428">Reviewer Summary:</text>
+  <text class="muted" x="436" y="448">- Update README to include API doc</text>
+
+  <!-- Actions -->
+  <rect class="panel" x="792" y="380" width="368" height="140" rx="6"/>
+  <text class="card-title" x="808" y="404">Actions</text>
+  <text class="muted" x="808" y="428">☐ Verify Kafka</text>
+  <text class="muted" x="808" y="448">☐ Update README</text>
+  <text class="muted" x="808" y="468">☐ Run smoke</text>
+
+  <!-- Followups -->
+  <rect class="panel" x="420" y="540" width="740" height="120" rx="6"/>
+  <text class="card-title" x="436" y="566">Follow-ups</text>
+  <text class="muted" x="436" y="590">Follow-up Suggested: Verify Matrix approval path</text>
+
+  <!-- Left column (Kanban placeholder) -->
+  <text class="header" x="40" y="50">Kanban (unchanged)</text>
+  <text class="muted" x="40" y="74">Columns: Pending · Approved · Completed</text>
+
+</svg>

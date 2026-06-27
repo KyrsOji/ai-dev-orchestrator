@@ -1,0 +1,54 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Taskboard Widget 3 Orchestrator Preview</title>
+    <style>
+      body { font-family: Arial, Helvetica, sans-serif; background: #f6f7fb; margin: 0; padding: 16px }
+      .container { display:flex; gap:12px }
+      .column { background:white; padding:8px; border-radius:6px; width:220px }
+      .card { background:#f9fafb; padding:8px; border-radius:6px; margin-bottom:8px }
+      .detail { background:white; padding:12px; border-radius:6px; flex:1 }
+      pre { white-space: pre-wrap }
+      .muted { color:#666; font-size:12px }
+    </style>
+  </head>
+  <body>
+    <h1>Task Board 3 Orchestrator Preview</h1>
+    <div class="container">
+      <div class="column">
+        <h3>Pending Review</h3>
+        <div class="card"><strong>Fix memory leak in service A</strong><div class="muted">TASK-1</div></div>
+      </div>
+      <div class="column">
+        <h3>Approved</h3>
+        <div class="card"><strong>Update README for new API</strong><div class="muted">TASK-2</div></div>
+      </div>
+      <div class="column">
+        <h3>Completed</h3>
+        <div class="card"><strong>Refactor module</strong><div class="muted">TASK-4</div></div>
+      </div>
+      <div class="detail">
+        <h2>Fix memory leak in service A</h2>
+        <div class="muted">TASK-1</div>
+        <h4>OpenHands output</h4>
+        <pre>OpenHands suggests patch xyz to close file handles.</pre>
+        <h4>Reviewer summary</h4>
+        <pre>Reviewer: reproduce locally; patch seems reasonable.</pre>
+        <h4>Proposed action</h4>
+        <div>type: commit</div>
+        <div>description: Apply memory-fix patch</div>
+        <h4>Latest reviewer decision</h4>
+        <pre>(none)</pre>
+        <h4>Last updated</h4>
+        <div class="muted">2026-06-13T00:00:00Z</div>
+        <div style="margin-top:12px">
+          <button>Approve</button>
+          <button>Deny</button>
+          <button>Defer</button>
+        </div>
+      </div>
+    </div>
+  </body>
+</html>
