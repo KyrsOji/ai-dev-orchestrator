@@ -1016,7 +1016,10 @@ app.post('/taskboard/api/task/decision', async (req, res) => {
 
     let producer = null;
     if (producerEnv) {
-      try { if (fs.existsSync(producerEnv)) producer = producerEnv; } catch (e) { /* ignore */ }
+      try {
+        // Do not honor obvious no-op simulation producer (/bin/true). Prefer a real kafka-console-producer if available.
+        if (fs.existsSync(producerEnv) && path.basename(producerEnv) !== 'true' && producerEnv !== '/bin/true') producer = producerEnv;
+      } catch (e) { /* ignore */ }
     }
     if (!producer) {
       producer = which('kafka-console-producer.sh') || which('kafka-console-producer');
@@ -1024,18 +1027,24 @@ app.post('/taskboard/api/task/decision', async (req, res) => {
 
     // Try CLI producer first (so KAFKA_CLIENT_CONFIG can be honored)
     if (producer) {
-      const args = ['--bootstrap-server', process.env.KAFKA_BOOTSTRAP || 'localhost:9092', '--topic', topic];
-      if (clientConfig) args.push('--producer.config', clientConfig);
-      try {
-        const proc = spawnSync(producer, args, { input: JSON.stringify(review_msg) + '\n', encoding: 'utf8', timeout: 30000, env: process.env });
-        const meta = { topic, returnCode: proc.status, stdout: (proc.stdout || '').slice(-4000), stderr: (proc.stderr || '').slice(-4000), used_cli: true };
-        if (proc.status === 0) {
-          return res.json({ ok: true, published: true, meta });
-        } else {
-          console.error('Producer CLI failed', meta);
+      // Skip known harmless no-op binaries (e.g., /bin/true) to avoid false-positive success responses
+      const prodBase = path.basename(producer || '');
+      if (prodBase === 'true' || producer === '/bin/true') {
+        console.warn('Producer CLI configured as no-op (true) - skipping CLI publish to avoid false-positive success. Falling back to Python kafka wrapper.');
+      } else {
+        const args = ['--bootstrap-server', process.env.KAFKA_BOOTSTRAP || 'localhost:9092', '--topic', topic];
+        if (clientConfig) args.push('--producer.config', clientConfig);
+        try {
+          const proc = spawnSync(producer, args, { input: JSON.stringify(review_msg) + '\n', encoding: 'utf8', timeout: 30000, env: process.env });
+          const meta = { topic, returnCode: proc.status, stdout: (proc.stdout || '').slice(-4000), stderr: (proc.stderr || '').slice(-4000), used_cli: true, cmd: [producer].concat(args) };
+          if (proc.status === 0) {
+            return res.json({ ok: true, published: true, meta });
+          } else {
+            console.error('Producer CLI failed', meta);
+          }
+        } catch (e) {
+          console.error('Producer CLI exception', e && e.message ? e.message : e);
         }
-      } catch (e) {
-        console.error('Producer CLI exception', e && e.message ? e.message : e);
       }
     }
 
