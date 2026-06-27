@@ -314,10 +314,10 @@ export default function ConversationActionCard({ task, onTaskUpdate, onRefresh }
           )
         }
 
-        // default: show existing Send + Reject for other stages
+        // default: do not expose the send CTA here; only allow reject
         return (
           <div style={{ display: 'flex', gap: 12, marginTop: 14 }}>
-            <button className="big" style={{ flex: 1, background: '#3b82f6', color: '#fff', border: 'none', opacity: selectedAction ? 1 : 0.6 }} onClick={() => handleDispatch()} disabled={!selectedAction}>Send to Engineering Team</button>
+            <div style={{ flex: 1 }} />
             <button className="big" style={{ flex: 1, background: '#ef4444', color: '#fff', border: 'none' }} onClick={() => handleReject()}>Reject</button>
           </div>
         )

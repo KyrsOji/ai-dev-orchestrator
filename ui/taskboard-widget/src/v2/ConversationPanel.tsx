@@ -79,7 +79,7 @@ export default function ConversationPanel({ task, followups, onTaskUpdate, onRef
         <div style={{ padding: 16 }}>No task selected</div>
       </div>
       <div style={{ borderTop: '1px solid #eee' }}>
-        <ConversationComposer onSend={(t) => { console.log('compose send', t) }} />
+        <ConversationComposer onSend={handleComposeSend} />
       </div>
     </div>
   )
