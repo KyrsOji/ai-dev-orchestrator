@@ -12,6 +12,26 @@ async function sleep(ms) { return new Promise(r => setTimeout(r, ms)) }
   const base = 'https://obiz.yahlife.com'
   const browser = await chromium.launch({ headless: true })
   const context = await browser.newContext()
+
+  // support --auth-from-server-env: read TASKBOARD_API_TOKEN from process.env without printing
+  const useServerEnvAuth = process.argv && process.argv.indexOf('--auth-from-server-env') !== -1
+  const serverToken = useServerEnvAuth ? (process.env.TASKBOARD_API_TOKEN || null) : null
+  if (useServerEnvAuth && !serverToken) {
+    console.warn('Warning: --auth-from-server-env requested but TASKBOARD_API_TOKEN not set in environment; proceeding without token')
+  }
+
+  // Inject token into every page as a global and localStorage if present (do NOT print token)
+  if (serverToken) {
+    try {
+      await context.addInitScript((t) => {
+        try { (window as any).__TASKBOARD_API_TOKEN = t } catch (e) {}
+        try { window.localStorage && window.localStorage.setItem && window.localStorage.setItem('taskboard_standalone_token', t) } catch (e) {}
+      }, serverToken)
+    } catch (e) {
+      // addInitScript may fail in some Playwright versions; fallback to setting later
+    }
+  }
+
   const page = await context.newPage()
 
   const taskId = genPwaId()
@@ -241,7 +261,11 @@ async function sleep(ms) { return new Promise(r => setTimeout(r, ms)) }
   // Attempt dispatch via UI (this requires server token; may fail)
   try {
     // set localStorage token to encourage client to send Authorization header if server expects it
-    await page.evaluate(() => { try { localStorage.setItem('taskboard_standalone_token', 'test-token') } catch (e) {} })
+    if (typeof serverToken !== 'undefined' && serverToken) {
+      await page.evaluate((t) => { try { localStorage.setItem('taskboard_standalone_token', t) } catch (e) {} }, serverToken)
+    } else {
+      await page.evaluate(() => { try { localStorage.setItem('taskboard_standalone_token', 'test-token') } catch (e) {} })
+    }
     const dispatchBtn = page.locator('button:has-text("Dispatch to Engineering")').first()
     await dispatchBtn.click()
     const resp = await page.waitForResponse(r => r.url().endsWith('/taskboard/api/task/decision'), { timeout: 5000 }).catch(() => null)
