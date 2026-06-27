@@ -34,3 +34,41 @@ Notes / Recommendations:
 - Consider exposing a "view full logs" link in ExecutionMonitor that opens the runDirectory in a new tab (if served) for easier troubleshooting.
 
 Recorded-by: OpenHands agent (on behalf of user)
+
+
+Date: 2026-06-27 (update)
+
+Summary:
+- Implemented UX/accessibility improvements to TaskboardV2:
+  - clearer collapsed visuals for left/right panels (background and border when collapsed)
+  - improved toggle aria-labels and titles to be more descriptive
+  - added hidden attribute on panel content to avoid aria-hidden hiding focusable children incorrectly
+
+- Verified ExecutionMonitor (src/v2/ExecutionMonitor.tsx) already provides production-useful fields:
+  - task-specific phase, last runner update, elapsed duration, stdout/stderr preview, polling timeout state
+  - "Open execution details" integrates with ExecutionDetailsDrawer
+  - runDirectory links are only exposed as web links; filesystem paths are shown shortened and copyable (no unsafe file:// links)
+
+- PWA icons: public/assets/icons/icon-192.png and icon-512.png already present; manifest references them.
+
+Actions performed:
+- Built UI: `npm run build` (ui/taskboard-widget) - success
+- Ran tests: `npm run test:followups` and `npm run test:render-safe` - all passed
+- Ran Playwright smoke (scripts/smoke_v3_ux_001.js) against https://obiz.yahlife.com/taskboard-v2/?v=v3-ux-001 - smoke passed; screenshot saved to /tmp/playwright_v3_ux_001.png
+
+Files changed:
+- ui/taskboard-widget/src/TaskboardV2.tsx (collapse UX + accessibility polish)
+
+Commit:
+- Branch: taskboard-session-chain
+- Commit: 1a68cf1e2d8872a91d5586433eaa04518ffd6cff (pushed)
+
+Notes / Next steps (runner investigation):
+- BUG-RUNNER-NOT-CONSUMING-NEW-TASK-001 is open. Recommended next steps (recorded here):
+  - Run the exact kafka-console-consumer CLI used by the runner with --consumer.config against ai.dev.task.ofbiz to reproduce the TimeoutException
+  - Inspect systemd unit/environment for KAFKA_FORCE_CLI, KAFKA_BOOTSTRAP, and TLS consumer args
+  - Check runner run directories for any artifacts for task PWA-20260627-202805
+  - Collect journal logs around TimeoutException and validate connectivity to kafka.yahlife.com:9095
+
+Recorded-by: OpenHands agent (on behalf of user)
+
