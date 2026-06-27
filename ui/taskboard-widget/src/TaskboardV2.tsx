@@ -262,7 +262,17 @@ export default function TaskboardV2() {
             )}
           </div>
           <div style={{ marginLeft: 8 }}>
-            <button aria-label={leftCollapsed ? 'Expand sessions panel (show list of engineering sessions)' : 'Collapse sessions panel (hide sessions list)'} title={leftCollapsed ? 'Expand sessions panel (show list of engineering sessions)' : 'Collapse sessions panel (hide sessions list)'} aria-expanded={!leftCollapsed} aria-controls="left-panel-content" className="small" onClick={() => setLeftCollapsed(c => !c)} style={{ padding: 8, borderRadius: 8 }}>{leftCollapsed ? '▶' : '◀'}</button>
+            <button
+              aria-label={leftCollapsed ? 'Show sessions panel' : 'Hide sessions panel'}
+              title={leftCollapsed ? 'Show sessions panel' : 'Hide sessions panel'}
+              aria-expanded={!leftCollapsed}
+              aria-controls="left-panel-content"
+              className="small"
+              onClick={() => setLeftCollapsed(c => !c)}
+              style={{ padding: 8, borderRadius: 8, background: leftCollapsed ? '#eef2ff' : 'transparent' }}
+            >
+              {leftCollapsed ? '\u25b6' : '\u25c0'}
+            </button>
           </div>
         </div>
 
@@ -477,7 +487,17 @@ export default function TaskboardV2() {
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <h3 style={{ margin: 0 }}>{rightCollapsed ? '' : 'Operations'}</h3>
           <div>
-            <button aria-label={rightCollapsed ? 'Expand operations panel (show runner status and tools)' : 'Collapse operations panel (hide operations)'} title={rightCollapsed ? 'Expand operations panel (show runner status and tools)' : 'Collapse operations panel (hide operations)'} aria-expanded={!rightCollapsed} aria-controls="right-panel-content" className="small" onClick={() => setRightCollapsed(c => !c)} style={{ padding: 8, borderRadius: 8 }}>{rightCollapsed ? '\u25c0' : '\u25b6'}</button>
+            <button
+              aria-label={rightCollapsed ? 'Show operations panel' : 'Hide operations panel'}
+              title={rightCollapsed ? 'Show operations panel' : 'Hide operations panel'}
+              aria-expanded={!rightCollapsed}
+              aria-controls="right-panel-content"
+              className="small"
+              onClick={() => setRightCollapsed(c => !c)}
+              style={{ padding: 8, borderRadius: 8, background: rightCollapsed ? '#eef2ff' : 'transparent' }}
+            >
+              {rightCollapsed ? '\u25c0' : '\u25b6'}
+            </button>
           </div>
         </div>
 

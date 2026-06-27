@@ -1,8 +1,7 @@
 import React from 'react'
 import { useEffect, useState } from 'react'
-import { fetchTasks, fetchRunnerStatus } from './api'
+import { fetchTasks, fetchAgents, fetchRunnerStatus } from './api'
 import ExecutionDetailsDrawer from './ExecutionDetailsDrawer'
-
 
 function formatIso(iso: any) {
   try {
@@ -13,28 +12,12 @@ function formatIso(iso: any) {
   } catch (e) { return String(iso) }
 }
 
-function formatDurationHuman(v: any) {
-  if (v === undefined || v === null) return ''
-  const raw = Number(String(v).replace(/[^0-9\.\-]/g, ''))
-  if (Number.isNaN(raw)) return String(v)
-  // If value looks like milliseconds (large), convert to seconds
-  let seconds = raw
-  if (raw > 100000) seconds = Math.round(raw / 1000)
-  // If value is plausibly seconds but fractional, round
-  seconds = Math.round(seconds)
-  const h = Math.floor(seconds / 3600)
-  const m = Math.floor((seconds % 3600) / 60)
-  const s = Math.floor(seconds % 60)
-  const parts: string[] = []
-  if (h) parts.push(`${h}h`)
-  if (m) parts.push(`${m}m`)
-  if (s || parts.length === 0) parts.push(`${s}s`)
-  return parts.join(' ')
-}
-
 function computePhaseFromTask(t: any) {
   if (!t) return 'Queued'
   const exec = t.executionReport || t.execution || t.execution_report || null
+  // prefer an explicit phase/stage if the execution report provides one
+  const phaseCandidate = exec && (exec.phase || exec.stage || exec.step || exec.currentPhase)
+  if (phaseCandidate) return String(phaseCandidate)
   const status = (exec && (exec.status || exec.executionStatus || exec.state)) || (t && t.status) || null
   const s = status ? String(status).toLowerCase() : ''
   if (s.includes('failed') || s === 'failed') return 'Failed'
@@ -51,12 +34,36 @@ function isWebUrl(s: any) {
   try { const u = new URL(String(s)); return u.protocol === 'http:' || u.protocol === 'https:' } catch (e) { return false }
 }
 
-export default function ExecutionMonitor({ task }: { task: any }) {
+function formatDurationHuman(value: any) {
+  if (value === null || value === undefined) return ''
+  const n = Number(value)
+  if (Number.isNaN(n)) return String(value)
+  let seconds = Math.round(n)
+  const parts: string[] = []
+  const h = Math.floor(seconds / 3600)
+  if (h) { parts.push(`${h}h`); seconds -= h * 3600 }
+  const m = Math.floor(seconds / 60)
+  if (m) { parts.push(`${m}m`); seconds -= m * 60 }
+  parts.push(`${seconds}s`)
+  return parts.join(' ')
+}
+
+function shortenPath(s: any, len = 70) {
+  if (!s) return ''
+  const str = String(s)
+  if (str.length <= len) return str
+  return `${str.slice(0, Math.max(8, len - 12))}...${str.slice(-8)}`
+}
+
+export default function ExecutionMonitor({ task, openExecutionDetails }: { task: any; openExecutionDetails?: (exec: any) => void }) {
   const [live, setLive] = useState<any>(task)
-  const [runner, setRunner] = useState<any>(null)
+  const [agents, setAgents] = useState<any>(null)
+  const [runnerStub, setRunnerStub] = useState<any>(null) // legacy runner-status fallback
   const [isPolling, setIsPolling] = useState<boolean>(false)
   const [pollTimedOut, setPollTimedOut] = useState<boolean>(false)
   const [showDetails, setShowDetails] = useState<boolean>(false)
+  const [now, setNow] = useState<number>(Date.now())
+
 
   useEffect(() => { setLive(task) }, [task && task.taskId, task && task.updatedAt])
 
@@ -85,8 +92,12 @@ export default function ExecutionMonitor({ task }: { task: any }) {
           updated = tasks.find((x: any) => x && x.taskId === task.taskId)
           if (updated) setLive(updated)
         }
+        // Prefer a rich agents endpoint for runner details
+        const ag = await fetchAgents().catch(() => null)
+        if (ag) setAgents(ag)
+        // Legacy runner status kept for minimal environments
         const r = await fetchRunnerStatus().catch(() => null)
-        if (r) setRunner(r)
+        if (r) setRunnerStub(r)
       } catch (e) {
         // ignore
       }
@@ -110,8 +121,9 @@ export default function ExecutionMonitor({ task }: { task: any }) {
       setIsPolling(true)
       doPoll()
     } else {
-      // fetch runner status once
-      fetchRunnerStatus().then((r) => { if (!cancelled) setRunner(r) }).catch(() => {})
+      // fetch agents/runner status once
+      fetchAgents().then((a) => { if (!cancelled) setAgents(a) }).catch(() => {})
+      fetchRunnerStatus().then((r) => { if (!cancelled) setRunnerStub(r) }).catch(() => {})
     }
 
     return () => { cancelled = true; setIsPolling(false); setPollTimedOut(false) }
@@ -122,15 +134,18 @@ export default function ExecutionMonitor({ task }: { task: any }) {
   const lastActivity = t.lastActivityAt || t.updatedAt || t.updated_at || null
   const reviewer = t.reviewerSummary || t.approver || t.reviewer || t.decision || null
 
-  // Normalize runner info: API may return array or object
+  // Normalize agent/runner info
   let runnerObj: any = null
-  if (runner) {
-    if (Array.isArray(runner)) {
+  if (agents) {
+    if (Array.isArray(agents)) {
+      const agentId = t && t.routing && (t.routing.selectedAgentId || t.routing.selectedAgent || (t.routing.selected && t.routing.selected.agentId))
+      runnerObj = (agentId && agents.find((r: any) => r && (r.agentId === agentId || r.id === agentId || r.hostname === agentId))) || agents[0]
+    } else if (agents && Array.isArray(agents.agents)) {
       const agentId = t && t.routing && (t.routing.selectedAgentId || t.routing.selectedAgent)
-      runnerObj = (agentId && runner.find((r: any) => r && (r.agentId === agentId || r.id === agentId || r.hostname === agentId))) || runner[0]
-    } else {
-      runnerObj = runner
+      runnerObj = (agentId && agents.agents.find((r: any) => r && (r.agentId === agentId || r.id === agentId || r.hostname === agentId))) || agents.agents[0]
     }
+  } else if (runnerStub) {
+    runnerObj = runnerStub
   }
 
   const runnerStatus = (runnerObj && (runnerObj.status || runnerObj.state)) || null
@@ -138,23 +153,51 @@ export default function ExecutionMonitor({ task }: { task: any }) {
 
   const exec = t.executionReport || t.execution || t.execution_report || null
 
-  // Prefer explicit execution duration; otherwise derive from timestamps
+  // Prefer explicit execution duration; otherwise derive from timestamps (and show live elapsed when running)
   const durationRaw = exec && (exec.executionDurationSeconds || exec.duration || exec.elapsed || exec.time)
+  const startedRaw = exec && (exec.startedAt || exec.executionStartedAt || exec.execution_started_at || exec.startTime || exec.createdAt)
+  const finishedRaw = exec && (exec.completedAt || exec.finishedAt || exec.completed_at || exec.updatedAt || exec.finished_at)
   let elapsedFromTimestamps: number | null = null
+  let elapsedSeconds: number | null = null
+  let startedMs: number | null = null
+  let finishedMs: number | null = null
   try {
-    const started = exec && (exec.startedAt || exec.executionStartedAt || exec.execution_started_at || exec.startTime || exec.createdAt)
-    const finished = exec && (exec.completedAt || exec.finishedAt || exec.completed_at || exec.updatedAt)
-    if (started && finished) {
-      const s = new Date(started).getTime()
-      const f = new Date(finished).getTime()
-      if (!Number.isNaN(s) && !Number.isNaN(f) && f >= s) elapsedFromTimestamps = Math.round((f - s) / 1000)
+    if (startedRaw) {
+      const s = new Date(startedRaw).getTime()
+      if (!Number.isNaN(s)) startedMs = s
+    }
+    if (finishedRaw) {
+      const f = new Date(finishedRaw).getTime()
+      if (!Number.isNaN(f)) finishedMs = f
+    }
+    if (startedMs !== null && finishedMs !== null && finishedMs >= startedMs) {
+      elapsedFromTimestamps = Math.round((finishedMs - startedMs) / 1000)
+      elapsedSeconds = elapsedFromTimestamps
+    } else if (startedMs !== null && (finishedMs === null)) {
+      // running: compute elapsed against live 'now' state (updated via effect below)
+      elapsedSeconds = Math.round((now - startedMs) / 1000)
     }
   } catch (e) { /* ignore */ }
 
-  const durationText = formatDurationHuman(durationRaw || elapsedFromTimestamps)
+  const durationText = formatDurationHuman(durationRaw || elapsedSeconds || elapsedFromTimestamps)
   const stdout = exec && (exec.stdout || exec.output || exec.response || exec.responsePreview || exec.response_preview) || null
   const stderr = exec && (exec.stderr || exec.errorOutput || null) || null
   const runDir = exec && (exec.runDirectory || exec.run_directory || exec.runDir) || null
+
+  useEffect(() => {
+    // When execution has started but not finished, update the 'now' timestamp every second
+    let id: any = null
+    try {
+      if (startedMs !== null && finishedMs === null) {
+        id = setInterval(() => setNow(Date.now()), 1000)
+      } else {
+        // ensure a fresh 'now' is captured when not actively running
+        setNow(Date.now())
+      }
+    } catch (e) {}
+    return () => { if (id) clearInterval(id) }
+  }, [startedMs, finishedMs])
+
 
   async function doRefresh() {
     try {
@@ -163,21 +206,16 @@ export default function ExecutionMonitor({ task }: { task: any }) {
         const updated = tasks.find((x: any) => x && x.taskId === task.taskId)
         if (updated) setLive(updated)
       }
+      const ag = await fetchAgents().catch(() => null)
+      if (ag) setAgents(ag)
       const r = await fetchRunnerStatus().catch(() => null)
-      if (r) setRunner(r)
+      if (r) setRunnerStub(r)
       setPollTimedOut(false)
     } catch (e) {}
   }
 
   function copyToClipboard(text: string) {
     try { if (typeof navigator !== 'undefined' && navigator.clipboard) navigator.clipboard.writeText(String(text)) } catch (e) {}
-  }
-
-  function shorten(s: any, len = 40) {
-    if (!s) return ''
-    const str = String(s)
-    if (str.length <= len) return str
-    return `${str.slice(0, Math.max(8, len - 12))}...${str.slice(-8)}`
   }
 
   return (
@@ -198,11 +236,11 @@ export default function ExecutionMonitor({ task }: { task: any }) {
           <div style={{ fontWeight: 700 }}>{runnerStatus || 'unknown'}</div>
 
           {runnerLastSeen ? (
-            <div style={{ fontSize: 12, color: '#6b7280', marginLeft: 12 }}>Runner update: <strong style={{ fontWeight: 700 }}>{formatIso(runnerLastSeen)}</strong></div>
+            <div style={{ fontSize: 12, color: '#6b7280', marginLeft: 12 }}>Runner update: <strong style={{ fontWeight: 700 }}>{runnerLastSeen ? formatIso(runnerLastSeen) : 'unknown'}</strong></div>
           ) : null}
 
           <div style={{ fontSize: 12, color: '#6b7280', marginLeft: 12 }}>Kafka:</div>
-          <div style={{ fontWeight: 700 }}>{(runnerObj && runnerObj.kafka) ? String(runnerObj.kafka) : 'unknown'}</div>
+          <div style={{ fontWeight: 700 }}>{(runnerObj && (runnerObj.kafka || (runnerObj.raw && runnerObj.raw.kafka))) ? String(runnerObj.kafka || (runnerObj.raw && runnerObj.raw.kafka)) : 'unknown'}</div>
 
           {durationText ? (
             <div style={{ marginLeft: 12, fontSize: 12, color: '#6b7280' }}>Elapsed: <strong style={{ fontWeight: 700 }}>{durationText}</strong></div>
@@ -210,12 +248,11 @@ export default function ExecutionMonitor({ task }: { task: any }) {
         </div>
 
         {runDir ? (
-          <div style={{ fontSize: 12, color: '#6b7280', display: 'flex', alignItems: 'center', gap: 8 }}>Run dir:
-            <code style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, monospace' }}>{shorten(runDir, 70)}</code>
+          <div style={{ fontSize: 12, color: '#6b7280', display: 'flex', alignItems: 'center', gap: 8 }}>
             {isWebUrl(runDir) ? (
-              <a className="small" href={String(runDir)} target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none' }} aria-label="Open logs in new tab">Open in new tab</a>
+              <div>Logs: <a className="small" href={String(runDir)} target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none' }} aria-label="Open logs in new tab">Open in new tab</a></div>
             ) : (
-              <button className="small" onClick={() => copyToClipboard(runDir)} aria-label="Copy run directory">Copy path</button>
+              <div>Logs: Available (not shown for security)</div>
             )}
           </div>
         ) : null}
@@ -228,22 +265,32 @@ export default function ExecutionMonitor({ task }: { task: any }) {
         ) : null}
 
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 6 }}>
-          <button className="small" onClick={() => setShowDetails(true)} aria-label={exec ? 'Open execution details' : 'Open execution details (no execution report yet)'} title={exec ? 'Open execution details' : 'No execution report yet'}>Open execution details</button>
+          {runDir ? (
+            isWebUrl(runDir) ? (
+              <a className="small" href={String(runDir)} target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none' }} aria-label="Open logs in new tab">View full logs</a>
+            ) : (
+              <button className="small" onClick={() => { if (openExecutionDetails) { openExecutionDetails(exec) } else { setShowDetails(true) } }} aria-label="Open execution details">Open execution details</button>
+            )
+          ) : null}
+
+          {!runDir ? (
+            <button className="small" onClick={() => { if (openExecutionDetails) { openExecutionDetails(exec) } else { setShowDetails(true) } }} aria-label="Open execution details">View execution details</button>
+          ) : null}
 
           {pollTimedOut && !exec ? (
             <div style={{ marginLeft: 'auto', color: '#374151', background: '#fff7ed', border: '1px solid #ffedd5', padding: 8, borderRadius: 6, fontSize: 13 }}>
-              Polling timed out — no execution report received. <button className="small" onClick={() => doRefresh()} style={{ marginLeft: 8 }}>Refresh</button>
+              <div>Polling timed out — no execution report received from runner.</div>
+              <div style={{ marginTop: 6, display: 'flex', gap: 8 }}>
+                <button className="small" onClick={() => doRefresh()}>Retry</button>
+                <button className="small" onClick={() => { if (openExecutionDetails) { openExecutionDetails(exec) } else { setShowDetails(true) } }}>Open execution details</button>
+              </div>
             </div>
           ) : null}
         </div>
 
-        {showDetails ? (
+        {showDetails && exec ? (
           <div style={{ marginTop: 8 }}>
-            {exec ? (
-              <ExecutionDetailsDrawer exec={exec} />
-            ) : (
-              <div style={{ padding: 8, borderRadius: 8, border: '1px solid #e6eefc', background: '#fff' }}>No execution report is available yet for this task.</div>
-            )}
+            <ExecutionDetailsDrawer exec={exec} />
             <div style={{ marginTop: 8 }}><button className="small" onClick={() => setShowDetails(false)} aria-label="Close execution details">Close</button></div>
           </div>
         ) : null}
