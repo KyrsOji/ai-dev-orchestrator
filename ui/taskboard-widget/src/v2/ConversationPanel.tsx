@@ -61,7 +61,19 @@ export default function ConversationPanel({ task, followups, onTaskUpdate, onRef
     }
 
     const base = localTask || task || {}
-    const updated = { ...base, proposedActions: [...(Array.isArray(base.proposedActions) ? base.proposedActions : []), newAction], selectedAction: newAction.id, updatedAt: new Date().toISOString() }
+    // Append the user message to the messages[] stream so the timeline and last-activity update immediately
+    const existingMessages = Array.isArray(base.messages) ? base.messages.slice() : []
+    const msg = { id: uuid('msg-'), author: 'user', text: text, createdAt: new Date().toISOString() }
+    existingMessages.push(msg)
+
+    const updated = {
+      ...base,
+      messages: existingMessages,
+      proposedActions: [...(Array.isArray(base.proposedActions) ? base.proposedActions : []), newAction],
+      selectedAction: newAction.id,
+      updatedAt: new Date().toISOString(),
+      lastActivityAt: new Date().toISOString(),
+    }
 
     if (typeof onTaskUpdate === 'function') {
       onTaskUpdate(updated)
