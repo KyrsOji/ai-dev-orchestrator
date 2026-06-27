@@ -4,10 +4,12 @@ const OFFLINE_URL = '/taskboard-v2/offline.html';
 self.addEventListener('install', (event) => {
   event.waitUntil((async () => {
     const cache = await caches.open(CACHE_NAME);
-    // Precache offline page and manifest
+    // Precache offline page, manifest and icons
     await cache.addAll([
       OFFLINE_URL,
       '/taskboard-v2/manifest.webmanifest',
+      '/taskboard-v2/assets/icons/icon-192.png',
+      '/taskboard-v2/assets/icons/icon-512.png',
       '/taskboard-v2/assets/icons/icon.svg'
     ]);
     self.skipWaiting();
