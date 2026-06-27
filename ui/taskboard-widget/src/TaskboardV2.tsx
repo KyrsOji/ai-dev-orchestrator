@@ -38,6 +38,8 @@ export default function TaskboardV2() {
   }, [])
 
   const selectedTask = tasks.find((t) => t.taskId === selectedId) || (tasks.length ? tasks[0] : null)
+  // key for forcing ConversationPanel remount when selected task changes significantly (updatedAt)
+  const selectedKey = selectedTask ? `${selectedTask.taskId}::${selectedTask.updatedAt || selectedTask.updated_at || ''}` : 'none'
   useEffect(() => { if (!selectedId && tasks.length) setSelectedId(tasks[0].taskId) }, [tasks])
 
   // Presentational helper: time-ago
@@ -181,20 +183,29 @@ export default function TaskboardV2() {
       const data = await res.json()
 
       if (Array.isArray(data)) {
-        // Reconcile: put returned (stored) tasks first, then append any local-only tasks (synthetic) that aren't in returned data
-        setTasks((prev) => {
-          try {
-            const returned = data.slice()
-            const returnedIds = new Set(returned.map((t: any) => t.taskId))
-            // Append prev tasks that are not in returned data (keeps synthetic tasks)
-            for (const p of prev) {
-              if (!returnedIds.has(p.taskId)) returned.push(p)
+        try {
+          // Reconcile: put returned (stored) tasks first, then append any local-only tasks (synthetic) that aren't in returned data
+          const returned = data.slice()
+          const returnedIds = new Set(returned.map((t: any) => t.taskId))
+          setTasks((prev) => {
+            try {
+              for (const p of prev) {
+                if (!returnedIds.has(p.taskId)) returned.push(p)
+              }
+              return returned
+            } catch (e) {
+              return prev
             }
-            return returned
-          } catch (e) {
-            return prev
-          }
-        })
+          })
+
+          // Ensure the currently selectedId remains valid; if not present in returned results, pick the first returned task
+          setSelectedId((prevSelectedId) => {
+            if (prevSelectedId && returnedIds.has(prevSelectedId)) return prevSelectedId
+            return returned.length ? returned[0].taskId : null
+          })
+        } catch (e) {
+          // ignore
+        }
       }
     } catch (e: any) {
       console.error('task save error', e)
@@ -409,7 +420,7 @@ export default function TaskboardV2() {
         </div>
 
         <div style={{ flex: 1 }}>
-          <ConversationPanel task={selectedTask} followups={followups} onTaskUpdate={handleTaskUpdate} onRefresh={async () => {
+          <ConversationPanel key={selectedKey} task={selectedTask} followups={followups} onTaskUpdate={handleTaskUpdate} onRefresh={async () => {
             try {
               const t = await fetchTasks()
               setTasks(Array.isArray(t) ? t : [])
