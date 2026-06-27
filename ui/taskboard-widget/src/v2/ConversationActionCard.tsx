@@ -127,7 +127,7 @@ export default function ConversationActionCard({ task, onTaskUpdate, onRefresh }
 
   return (
     <div style={{ padding: 16, borderRadius: 14, background: '#fff', border: '1px solid #eef2ff', boxShadow: '0 6px 18px #02061708' }}>
-      <div style={{ fontWeight: 900, marginBottom: 10, fontSize: 16 }}>Review Decisions</div>
+      {!(stage === 'Complete' || (task && task.followUp && task.followUp.active)) ? <div style={{ fontWeight: 900, marginBottom: 10, fontSize: 16 }}>Review Decisions</div> : null}
       {/* Summary line: different when viewing a completed task or an active follow-up */}
       {(() => {
         if (stage === 'Complete' || (task && task.followUp && task.followUp.active)) {
