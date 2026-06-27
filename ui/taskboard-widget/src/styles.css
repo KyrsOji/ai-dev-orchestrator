@@ -334,6 +334,58 @@ pre { white-space: pre-wrap; font-family: inherit; background: #fff; padding: 8p
 .message-data { font-size: 13px; color: #111827; overflow: auto; background: #fff; padding: 8px; border-radius: 8px; box-shadow: 0 2px 8px rgba(2,6,23,0.04); white-space: pre-wrap; margin-top: 8px; }
 
 /* Execution card styles */
+
+
+/* Drawer panels (left/right) - desktop and mobile behaviours */
+.drawer-left, .drawer-right {
+  transition: width .18s ease, transform .2s ease;
+  background: transparent;
+}
+
+/* Desktop states */
+.drawer-left.open.desktop, .drawer-right.open.desktop { width: 320px; }
+.drawer-left.closed.desktop, .drawer-right.closed.desktop { width: 56px; }
+
+/* Mobile overlay behaviour */
+.drawer-left.mobile, .drawer-right.mobile {
+  position: fixed;
+  top: 0; bottom: 0;
+  width: 80%; max-width: 420px;
+  z-index: 1200;
+  background: #fff;
+  box-shadow: 0 6px 24px rgba(2,6,23,0.12);
+  transform: translateX(0);
+}
+.drawer-left.mobile.closed { transform: translateX(-110%); }
+.drawer-right.mobile.closed { transform: translateX(110%); }
+
+/* Backdrop used on mobile so drawers act as overlays */
+.drawer-backdrop {
+  position: fixed; left: 0; right: 0; top: 0; bottom: 0;
+  background: rgba(0,0,0,0.32);
+  z-index: 1150;
+}
+
+.drawer-content { overflow: auto; max-height: 100vh; }
+.drawer-toggle { cursor: pointer; }
+
+/* Floating action button to re-open a collapsed drawer on desktop */
+.drawer-fab {
+  position: absolute;
+  top: 12px;
+  left: -20px;
+  width: 40px; height: 40px;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: 999px; background: #3b82f6; color: #fff; border: none;
+  box-shadow: 0 6px 12px rgba(0,0,0,0.12); z-index: 1300;
+}
+.drawer-right .drawer-fab { left: auto; right: -20px; }
+
+@media (max-width: 768px) {
+  .drawer-left.mobile, .drawer-right.mobile { width: 86%; }
+  .drawer-fab { display: none; }
+}
+
 .execution-card { border-radius: 12px; overflow: hidden; }
 .execution-header { display: flex; align-items: center; gap: 12px; padding: 12px; cursor: pointer; user-select: none; border-radius: 12px; }
 

@@ -13,15 +13,36 @@ export default function TaskboardV2() {
   const [agents, setAgents] = useState<any[]>([])
   const [selectedId, setSelectedId] = useState<string | null>(null)
 
-  // Collapsible side panels (persisted in localStorage). Default collapsed on small screens.
+  // Drawer state and mobile detection. Persist collapsed state in localStorage.
+  const [isMobile, setIsMobile] = useState<boolean>(() => {
+    try {
+      return typeof window !== 'undefined' && window.matchMedia && window.matchMedia('(max-width: 768px)').matches
+    } catch (e) { return false }
+  })
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.matchMedia) return
+    const mq = window.matchMedia('(max-width: 768px)')
+    const handler = (ev: any) => setIsMobile(ev.matches)
+    try {
+      if (typeof mq.addEventListener === 'function') mq.addEventListener('change', handler)
+      else if (typeof (mq as any).addListener === 'function') (mq as any).addListener(handler)
+    } catch (e) {}
+    return () => {
+      try {
+        if (typeof mq.removeEventListener === 'function') mq.removeEventListener('change', handler)
+        else if (typeof (mq as any).removeListener === 'function') (mq as any).removeListener(handler)
+      } catch (e) {}
+    }
+  }, [])
+
   const [leftCollapsed, setLeftCollapsed] = useState<boolean>(() => {
     try {
       const v = localStorage.getItem('taskboard_left_collapsed')
       if (v === '1') return true
       if (v === '0') return false
     } catch (e) {}
-    if (typeof window !== 'undefined' && window.matchMedia && window.matchMedia('(max-width: 768px)').matches) return true
-    return false
+    return isMobile ? true : false
   })
   const [rightCollapsed, setRightCollapsed] = useState<boolean>(() => {
     try {
@@ -29,16 +50,42 @@ export default function TaskboardV2() {
       if (v === '1') return true
       if (v === '0') return false
     } catch (e) {}
-    if (typeof window !== 'undefined' && window.matchMedia && window.matchMedia('(max-width: 768px)').matches) return true
-    return false
+    return isMobile ? true : false
   })
 
   useEffect(() => {
     try { localStorage.setItem('taskboard_left_collapsed', leftCollapsed ? '1' : '0') } catch (e) {}
   }, [leftCollapsed])
+
   useEffect(() => {
     try { localStorage.setItem('taskboard_right_collapsed', rightCollapsed ? '1' : '0') } catch (e) {}
   }, [rightCollapsed])
+
+  // Close drawers on Escape (useful for mobile overlays)
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') {
+        try {
+          if (!leftCollapsed && isMobile) setLeftCollapsed(true)
+          if (!rightCollapsed && isMobile) setRightCollapsed(true)
+        } catch (err) {}
+      }
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [leftCollapsed, rightCollapsed, isMobile])
+
+  // Manage body scroll when overlays are open on mobile
+  useEffect(() => {
+    try {
+      if (isMobile && (!leftCollapsed || !rightCollapsed)) {
+        document.body.style.overflow = 'hidden'
+      } else {
+        document.body.style.overflow = ''
+      }
+    } catch (e) {}
+    return () => { try { document.body.style.overflow = '' } catch (e) {} }
+  }, [leftCollapsed, rightCollapsed, isMobile])
 
   useEffect(() => {
     async function load() {
@@ -246,8 +293,8 @@ export default function TaskboardV2() {
 
   return (
     <div style={{ display: 'flex', gap: 12, padding: 12, height: '100vh', boxSizing: 'border-box' }}>
-      <div id="left-panel" style={{ width: leftCollapsed ? 56 : 320, overflow: 'hidden', transition: 'width 0.18s', display: 'flex', flexDirection: 'column', background: leftCollapsed ? '#eef2ff' : 'transparent', borderRight: leftCollapsed ? '1px solid #dbeafe' : '1px solid #eee' }} aria-label="Engineering sessions">
-        <div style={{ padding: 12, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+      <div id="left-panel" className={`drawer-left ${leftCollapsed ? 'closed' : 'open'} ${isMobile ? 'mobile' : 'desktop'}`} aria-label="Engineering sessions" aria-expanded={!leftCollapsed}>
+        <div style={{ padding: 12, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }} className="drawer-header">
           <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 8 }}>
             {leftCollapsed ? (
               <>
@@ -263,12 +310,12 @@ export default function TaskboardV2() {
           </div>
           <div style={{ marginLeft: 8 }}>
             <button
-              aria-label={leftCollapsed ? 'Open sessions sidebar' : 'Close sessions sidebar'}
-              title={leftCollapsed ? 'Open sessions sidebar' : 'Close sessions sidebar'}
+              aria-label={leftCollapsed ? 'Open sessions drawer' : 'Close sessions drawer'}
+              title={leftCollapsed ? 'Open sessions drawer' : 'Close sessions drawer'}
               aria-expanded={!leftCollapsed}
               aria-controls="left-panel-content"
-              className="small"
-              onClick={() => setLeftCollapsed(c => !c)}
+              className="small drawer-toggle"
+              onClick={() => setLeftCollapsed(c => { const next = !c; try { localStorage.setItem('taskboard_left_collapsed', next ? '1' : '0') } catch (e) {} ; return next })}
               style={{ padding: 8, borderRadius: 8, background: leftCollapsed ? '#eef2ff' : 'transparent' }}
             >
               {leftCollapsed ? '\u25b6' : '\u25c0'}
@@ -276,13 +323,23 @@ export default function TaskboardV2() {
           </div>
         </div>
 
-        <div id="left-panel-content" aria-hidden={leftCollapsed} hidden={leftCollapsed} style={{ display: leftCollapsed ? 'none' : 'block', overflow: 'auto' }}>
+        <div id="left-panel-content" aria-hidden={leftCollapsed} hidden={leftCollapsed} className="drawer-content" style={{ display: leftCollapsed ? 'none' : 'block', overflow: 'auto' }}>
           {(!tasks || tasks.length === 0) ? (
             <div style={{ padding: 12, color: '#6b7280' }}>No engineering sessions yet. Start engineering to begin.</div>
           ) : (
             <ConversationList tasks={tasks} selectedId={selectedTask ? selectedTask.taskId : undefined} onSelect={(id) => setSelectedId(id)} />
           )}
         </div>
+
+        {/* Mobile backdrop */}
+        {isMobile && !leftCollapsed ? (
+          <div className="drawer-backdrop" onClick={() => setLeftCollapsed(true)} aria-hidden="true" />
+        ) : null}
+
+        {/* Floating reopen button on desktop */}
+        {!isMobile && leftCollapsed ? (
+          <button aria-label="Open sessions drawer" className="drawer-fab" onClick={() => setLeftCollapsed(false)} title="Open sessions drawer">☰</button>
+        ) : null}
       </div>
 
       {/* Start Engineering modal */}
@@ -483,31 +540,41 @@ export default function TaskboardV2() {
         </div>
       </div>
 
-      <div id="right-panel" style={{ width: rightCollapsed ? 56 : 320, overflow: 'hidden', padding: 12, transition: 'width 0.18s', background: rightCollapsed ? '#eef2ff' : 'transparent', borderLeft: rightCollapsed ? '1px solid #dbeafe' : '1px solid #eee' }} aria-label="Operations panel">
+      <div id="right-panel" className={`drawer-right ${rightCollapsed ? 'closed' : 'open'} ${isMobile ? 'mobile' : 'desktop'}`} aria-label="Operations panel" aria-expanded={!rightCollapsed}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <h3 style={{ margin: 0 }}>{rightCollapsed ? '' : 'Operations'}</h3>
           <div>
             <button
-              aria-label={rightCollapsed ? 'Open operations panel' : 'Close operations panel'}
-              title={rightCollapsed ? 'Open operations panel' : 'Close operations panel'}
+              aria-label={rightCollapsed ? 'Open operations drawer' : 'Close operations drawer'}
+              title={rightCollapsed ? 'Open operations drawer' : 'Close operations drawer'}
               aria-expanded={!rightCollapsed}
               aria-controls="right-panel-content"
-              className="small"
-              onClick={() => setRightCollapsed(c => !c)}
+              className="small drawer-toggle"
+              onClick={() => setRightCollapsed(c => { const next = !c; try { localStorage.setItem('taskboard_right_collapsed', next ? '1' : '0') } catch (e) {} ; return next })}
               style={{ padding: 8, borderRadius: 8, background: rightCollapsed ? '#eef2ff' : 'transparent' }}
             >
-              {rightCollapsed ? '\u25b6' : '\u25c0'}
+              {rightCollapsed ? '\u25c0' : '\u25b6'}
             </button>
           </div>
         </div>
+
+        {/* Mobile backdrop */}
+        {isMobile && !rightCollapsed ? (
+          <div className="drawer-backdrop" onClick={() => setRightCollapsed(true)} aria-hidden="true" />
+        ) : null}
 
         {rightCollapsed ? (
           <div style={{ paddingTop: 12, textAlign: 'center', color: '#6b7280', fontWeight: 700 }}>Ops</div>
         ) : null}
 
-        <div id="right-panel-content" aria-hidden={rightCollapsed} hidden={rightCollapsed} style={{ display: rightCollapsed ? 'none' : 'block' }}>
+        <div id="right-panel-content" aria-hidden={rightCollapsed} hidden={rightCollapsed} className="drawer-content" style={{ display: rightCollapsed ? 'none' : 'block' }}>
           <OperationsPanel runnerStatus={runnerStatus} agents={agents} />
         </div>
+
+        {/* Floating reopen button on desktop */}
+        {!isMobile && rightCollapsed ? (
+          <button aria-label="Open operations drawer" className="drawer-fab" onClick={() => setRightCollapsed(false)} title="Open operations drawer">☰</button>
+        ) : null}
       </div>
     </div>
   )
