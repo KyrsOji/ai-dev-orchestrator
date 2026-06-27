@@ -239,7 +239,7 @@ export default function ConversationActionCard({ task, onTaskUpdate, onRefresh }
 
             const decisionPayload: any = {
               taskId: task && task.taskId,
-              decision: 'rejected',
+              decision: 'denied',
               policy: (selectedObj && selectedObj.type) || null,
               selectedAction: selectedObj || (task && task.selectedAction) || null,
               editedAction: null,
@@ -252,14 +252,14 @@ export default function ConversationActionCard({ task, onTaskUpdate, onRefresh }
             try {
               await postDecision(decisionPayload)
 
-              // Update task to rejected on success
+              // Update task to denied on success
               try {
                 const base = task || {}
-                const updatedTask = { ...base, status: 'rejected', decision: 'rejected', rejected: true, rejectedAt: new Date().toISOString(), updatedAt: new Date().toISOString() }
+                const updatedTask = { ...base, status: 'denied', decision: 'denied', denied: true, deniedAt: new Date().toISOString(), updatedAt: new Date().toISOString() }
                 if (typeof onTaskUpdate === 'function') {
                   onTaskUpdate(updatedTask)
                 } else {
-                  try { if (task) { task.rejected = true; task.status = 'rejected'; task.decision = 'rejected' } } catch (e) {}
+                  try { if (task) { task.denied = true; task.status = 'denied'; task.decision = 'denied' } } catch (e) {}
                 }
               } catch (e) {
                 // ignore
