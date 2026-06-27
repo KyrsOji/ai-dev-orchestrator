@@ -24,7 +24,7 @@ async function sleep(ms) { return new Promise(r => setTimeout(r, ms)) }
   if (serverToken) {
     try {
       await context.addInitScript((t) => {
-        try { (window as any).__TASKBOARD_API_TOKEN = t } catch (e) {}
+        try { window.__TASKBOARD_API_TOKEN = t } catch (e) {}
         try { window.localStorage && window.localStorage.setItem && window.localStorage.setItem('taskboard_standalone_token', t) } catch (e) {}
       }, serverToken)
     } catch (e) {
@@ -280,11 +280,11 @@ async function sleep(ms) { return new Promise(r => setTimeout(r, ms)) }
     results.dispatched = false
   }
 
-  // If dispatched, poll for executionReport on new session (up to 60s)
+  // If dispatched, poll for executionReport on new session (up to 120s)
   if (results.dispatched) {
     const start = Date.now()
     let polled = null
-    for (let i = 0; i < 60; i++) {
+    for (let i = 0; i < 120; i++) {
       const t = await fetchStoredTask()
       if (t && Array.isArray(t.sessions)) {
         const activeId = t.activeSessionId || (t.sessions.length ? t.sessions[t.sessions.length-1].sessionId : null)
@@ -297,8 +297,21 @@ async function sleep(ms) { return new Promise(r => setTimeout(r, ms)) }
       await sleep(1000)
     }
     results.newExecutionReport = polled ? true : false
+
+    // Always collect runner result endpoint and stored task snapshot for debugging/tracing
+    try {
+      const res = await context.request.get(`${base}/taskboard/api/results/${encodeURIComponent(taskId)}`)
+      results.runnerEvidence = res && res.ok() ? await res.json() : { status: res ? res.status() : 'no-response' }
+    } catch (e) { results.runnerEvidence = { error: String(e) } }
+
+    try {
+      const stored = await fetchStoredTask()
+      results.reviewerEvidence = stored || null
+    } catch (e) { results.reviewerEvidence = { error: String(e) } }
   } else {
     results.newExecutionReport = false
+    results.runnerEvidence = null
+    results.reviewerEvidence = null
   }
 
   // final screenshot
