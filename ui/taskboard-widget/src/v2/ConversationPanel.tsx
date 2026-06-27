@@ -102,11 +102,9 @@ export default function ConversationPanel({ task, followups, onTaskUpdate, onRef
         <ConversationTimeline task={localTask} followups={followups} onTaskUpdate={onTaskUpdate} onRefresh={onRefresh} />
       </div>
 
-      {!(Array.isArray(localTask.proposedActions) && localTask.proposedActions.length > 0) ? (
-        <div style={{ borderTop: '1px solid #eee' }}>
-          <ConversationComposer onSend={handleComposeSend} />
-        </div>
-      ) : null}
+      <div style={{ borderTop: '1px solid #eee' }}>
+        <ConversationComposer onSend={handleComposeSend} />
+      </div>
 
       {/* Action choice modal / bottom sheet */}
       {actionModalOpen ? (

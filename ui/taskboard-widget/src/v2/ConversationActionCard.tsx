@@ -47,6 +47,10 @@ export default function ConversationActionCard({ task, onTaskUpdate, onRefresh }
     } catch (e) {}
     return false
   })()
+  // Compute lifecycle stage for conditional rendering
+  const stage = determineStage(task)
+
+
 
 
   function renderActionLabel(a: any) {
@@ -209,8 +213,10 @@ export default function ConversationActionCard({ task, onTaskUpdate, onRefresh }
 
       {/* Action bar: show/hide based on lifecycle stage */}
       {(() => {
-        const stage = determineStage(task)
         if (stage === 'Conversation') return null
+
+        const completedStages = ['Complete', 'Reviewed', 'Evidence']
+        const isCompleted = completedStages.includes(stage)
 
         async function handleDispatch() {
           if (isDispatching) return
@@ -339,6 +345,43 @@ export default function ConversationActionCard({ task, onTaskUpdate, onRefresh }
           }
         }
 
+        if (isCompleted) {
+          const exec = task && (task.executionReport || task.execution || task.execution_report) || null
+          const returnCode = exec && (exec.returnCode || exec.return_code || exec.exitCode || exec.exit_code || exec.code || exec.statusCode) || null
+          const stdout = exec && (exec.stdout || exec.output || exec.response || exec.responsePreview || exec.response_preview) || null
+
+          return (
+            <div style={{ marginTop: 14 }}>
+              <div style={{ fontWeight: 800, marginBottom: 8 }}>Execution completed</div>
+
+              <div style={{ padding: 8, borderRadius: 10, background: '#f8fafc', border: '1px solid #e6eefc' }}>
+                {returnCode !== null ? <div>Return code: <strong>{String(returnCode)}</strong></div> : null}
+                {stdout ? <div style={{ marginTop: 8 }}><strong>Output</strong><pre style={{ whiteSpace: 'pre-wrap', margin: 0 }}>{String(stdout).slice(0, 2000)}</pre></div> : null}
+              </div>
+
+              <div style={{ marginTop: 12 }}>
+                <div style={{ fontWeight: 900, marginBottom: 8 }}>Review Decisions (history)</div>
+                {recs.length ? recs.map((r: any, i: number) => {
+                  const rid = (r && (r.id || String(i)))
+                  const selectedId = task && task.selectedAction ? (typeof task.selectedAction === 'string' ? task.selectedAction : (task.selectedAction && task.selectedAction.id)) : null
+                  const isSelected = selectedId === rid
+                  return (
+                    <div key={rid} style={{ display: 'flex', alignItems: 'center', gap: 12, background: isSelected ? '#eef2ff' : 'transparent', padding: 8, borderRadius: 10 }}>
+                      <input type="radio" aria-label={`review-decision-${i}`} name={`selectedAction-${task && task.taskId || 'task'}`} checked={isSelected} readOnly />
+                      <div style={{ flex: 1, fontWeight: 600 }}>{renderActionLabel(r)}</div>
+                    </div>
+                  )
+                }) : <div style={{ color: '#6b7280' }}>No review decisions recorded.</div>}
+              </div>
+
+              <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
+                <button className="small" onClick={() => { setShowForm(true) }} style={{ background: '#fff', border: '1px solid #e6eefc', padding: '6px 10px', borderRadius: 8 }}>Create follow-up decision</button>
+                <div style={{ flex: 1 }} />
+                <button className="small" onClick={() => { try { const ta = document.querySelector('.composer textarea') as HTMLTextAreaElement | null; if (ta) { ta.focus() } } catch (e) {} }} style={{ background: '#fff', border: '1px solid #e6eefc', padding: '6px 10px', borderRadius: 8 }}>Continue conversation</button>
+              </div>
+            </div>
+          )
+        }
 
         if (stage === 'Decision') {
           return (
@@ -394,13 +437,8 @@ export default function ConversationActionCard({ task, onTaskUpdate, onRefresh }
           )
         }
 
-        // default: do not expose the send CTA here; only allow reject
-        return (
-          <div style={{ display: 'flex', gap: 12, marginTop: 14 }}>
-            <div style={{ flex: 1 }} />
-            <button className="big" style={{ flex: 1, background: '#ef4444', color: '#fff', border: 'none' }} onClick={() => handleReject()}>Reject</button>
-          </div>
-        )
+        // default: do not expose the send CTA here; only allow reject (but hide reject for non-decision/approved states)
+        return null
       })()}
 
       {/* Status / dispatch progress */}
@@ -425,9 +463,11 @@ export default function ConversationActionCard({ task, onTaskUpdate, onRefresh }
       ) : null}
 
 
-      <div style={{ marginTop: 8, color: '#6b7280', fontSize: 12 }}>
-        Approve only sets the task to "approved". Dispatch posts the decision to the engineering pipeline (POST /taskboard/api/task/decision) and marks the task as "dispatched" on success. An error will be shown if the dispatch fails.
-      </div>
+      {(!['Complete','Reviewed','Evidence'].includes(stage)) ? (
+        <div style={{ marginTop: 8, color: '#6b7280', fontSize: 12 }}>
+          Approve only sets the task to "approved". Dispatch posts the decision to the engineering pipeline (POST /taskboard/api/task/decision) and marks the task as "dispatched" on success. An error will be shown if the dispatch fails.
+        </div>
+      ) : null}
     </div>
   )
 }

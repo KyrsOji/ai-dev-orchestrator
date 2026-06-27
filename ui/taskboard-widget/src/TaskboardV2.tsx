@@ -136,11 +136,14 @@ export default function TaskboardV2() {
   // Compute header metadata from messages[] (preferred)
   let headerEngineer = ''
   let headerLastActivity = ''
+  let headerRunner = ''
+  let headerReviewer = ''
+  let headerKafka = ''
   if (selectedTask) {
     // Engineer
     try {
       const agentId = selectedTask && selectedTask.routing && selectedTask.routing.selectedAgentId
-      const agentObj = agentId && agents ? agents.find((a) => a && (a.id === agentId || a.agentId === agentId)) : null
+      const agentObj = agentId && agents ? agents.find((a) => a && (a.id === agentId || a.agentId === agentId || a.hostname === agentId)) : null
       if (agentObj) headerEngineer = deriveFriendlyProfile(agentObj).name
       else headerEngineer = (selectedTask && selectedTask.routing && (selectedTask.routing.selectedHostname || selectedTask.routing.selectedAgentId)) || ''
     } catch (e) { headerEngineer = '' }
@@ -154,6 +157,40 @@ export default function TaskboardV2() {
         headerLastActivity = timeAgoFromIso(selectedTask.updatedAt || selectedTask.updated_at)
       }
     } catch (e) { headerLastActivity = timeAgoFromIso(selectedTask.updatedAt || selectedTask.updated_at) }
+
+    // Runner: prefer routing -> per-task executionReport runner fields -> global runnerStatus fallback
+    try {
+      const exec = (selectedTask && (selectedTask.executionReport || selectedTask.execution || selectedTask.execution_report)) || null
+      const routingAgent = selectedTask && selectedTask.routing && (selectedTask.routing.selectedAgentId || selectedTask.routing.selectedHostname)
+      if (routingAgent && agents && Array.isArray(agents)) {
+        const a = agents.find((x) => x && (x.id === routingAgent || x.agentId === routingAgent || x.hostname === routingAgent))
+        if (a) headerRunner = deriveFriendlyProfile(a).name
+      }
+      if (!headerRunner && exec) {
+        headerRunner = exec.runner || exec.agentId || exec.executor || exec.host || exec.hostname || ''
+        if (headerRunner && typeof headerRunner === 'object') headerRunner = headerRunner.name || headerRunner.id || ''
+      }
+      if (!headerRunner && runnerStatus && runnerStatus.status) headerRunner = runnerStatus.status
+    } catch (e) { headerRunner = '' }
+
+    // Reviewer: prefer explicit reviewer/decision fields
+    try {
+      headerReviewer = selectedTask.reviewerSummary || selectedTask.reviewer || selectedTask.approver || selectedTask.decision || ''
+      if (headerReviewer && typeof headerReviewer === 'object') headerReviewer = headerReviewer.name || headerReviewer.id || String(headerReviewer)
+      if (headerReviewer) headerReviewer = String(headerReviewer).slice(0, 60)
+    } catch (e) { headerReviewer = '' }
+
+    // Kafka / published state
+    try {
+      const exec = (selectedTask && (selectedTask.executionReport || selectedTask.execution || selectedTask.execution_report)) || null
+      if (selectedTask.dispatched || selectedTask.dispatchedAt) {
+        headerKafka = 'Delivered'
+      } else if (exec && (exec.publishedAt || exec.published || exec.kafka)) {
+        headerKafka = exec.publishedAt ? 'Published' : (exec.published ? 'Published' : (exec.kafka ? String(exec.kafka) : 'Published'))
+      } else {
+        headerKafka = ''
+      }
+    } catch (e) { headerKafka = '' }
   }
 
   // Start Engineering modal state
@@ -508,7 +545,13 @@ export default function TaskboardV2() {
 
             <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
               <div style={{ fontSize: 12, color: '#6b7280' }}>Runner:</div>
-              <div style={{ fontWeight: 700 }}>{runnerStatus ? runnerStatus.status : 'unknown'}</div>
+              <div style={{ fontWeight: 700 }}>{headerRunner || (runnerStatus ? (runnerStatus.status || 'Unknown') : 'Unknown')}</div>
+
+              <div style={{ fontSize: 12, color: '#6b7280', marginLeft: 12 }}>Reviewer:</div>
+              <div style={{ fontWeight: 700 }}>{headerReviewer || 'Unknown'}</div>
+
+              <div style={{ fontSize: 12, color: '#6b7280', marginLeft: 12 }}>Kafka:</div>
+              <div style={{ fontWeight: 700 }}>{headerKafka || (selectedTask && selectedTask.kafka ? String(selectedTask.kafka) : 'Unknown')}</div>
 
               <div style={{ fontSize: 12, color: '#6b7280', marginLeft: 6 }}>Follow-ups:</div>
               <div style={{ fontWeight: 700 }}>{followups ? followups.length : 0}</div>
