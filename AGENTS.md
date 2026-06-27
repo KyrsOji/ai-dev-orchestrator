@@ -135,3 +135,26 @@ Notes / Next steps:
 
 Recorded-by: OpenHands agent (on behalf of user)
 
+
+
+Date: 2026-06-27 (follow-up lifecycle fix)
+
+Summary:
+- Fixed approval persistence bug where approving a follow-up did not persist into the active session.
+- Root cause: handleTaskUpdate merged sessions incorrectly, preferring stored existing session objects over incoming updated session objects with the same sessionId. This caused session-level updates (approval/status/selectedActionId) to be silently discarded.
+
+Actions performed:
+- Update TaskboardV2.handleTaskUpdate session merge to prefer updated sessions for matching sessionId (new sessions override existing ones).
+- Ensure ConversationActionCard Approve path writes session-level approval (approval object, status 'Approved', and reviewDecision.selectedActionId) and also updates legacy top-level compatibility fields.
+- Add/extend smoke_followup_session_lifecycle.js to assert approval persistence and previous session immutability.
+
+Files changed:
+- ui/taskboard-widget/src/TaskboardV2.tsx
+- ui/taskboard-widget/src/v2/ConversationActionCard.tsx
+- ui/taskboard-widget/scripts/smoke_followup_session_lifecycle.js
+
+Observed result:
+- Approve now persists into the active follow-up session and is reflected in server-stored task object. Previous completed session remains immutable and its executionReport is preserved.
+
+Recorded-by: OpenHands agent (on behalf of user)
+
