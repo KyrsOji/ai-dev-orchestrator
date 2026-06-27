@@ -162,6 +162,82 @@ export default function ConversationActionCard({ task, onTaskUpdate, onRefresh }
         const stage = determineStage(task)
         if (stage === 'Conversation') return null
 
+        async function handleDispatch() {
+          try {
+            // clear previous error
+            try { setLocalDispatchError(null) } catch (e) {}
+            // Build selectedObj
+            let selectedObj: any = null
+            try {
+              if (task && task.selectedAction) {
+                if (typeof task.selectedAction === 'string') {
+                  selectedObj = (Array.isArray(task.proposedActions) ? task.proposedActions.find((a: any) => a.id === task.selectedAction) : null) || null
+                } else {
+                  selectedObj = task.selectedAction
+                }
+              }
+            } catch (e) { selectedObj = null }
+
+            const decisionPayload: any = {
+              taskId: task && task.taskId,
+              decision: 'approved',
+              policy: (selectedObj && selectedObj.type) || null,
+              selectedAction: selectedObj || (task && task.selectedAction) || null,
+              editedAction: null,
+              newAction: null,
+              notes: null,
+              source: 'taskboard-v2',
+              createdAt: new Date().toISOString(),
+            }
+
+            const headers: any = { 'Content-Type': 'application/json' }
+            let token: any = null
+            try {
+              if (typeof window !== 'undefined') {
+                token = (window as any).__TASKBOARD_API_TOKEN || (window.localStorage ? window.localStorage.getItem('taskboard_standalone_token') : null)
+              }
+            } catch (e) { token = null }
+            if (token) headers['Authorization'] = `Bearer ${token}`
+
+            const res = await fetch('/taskboard/api/task/decision', {
+              method: 'POST',
+              headers,
+              body: JSON.stringify(decisionPayload),
+            })
+
+            if (!res.ok) {
+              const text = await res.text()
+              throw new Error(`Decision dispatch failed: ${res.status} ${res.statusText} ${text}`)
+            }
+
+            // Update task to dispatched on success
+            try {
+              const base = task || {}
+              const updatedTask = { ...base, status: 'dispatched', dispatched: true, dispatchedAt: new Date().toISOString(), updatedAt: new Date().toISOString() }
+              if (typeof onTaskUpdate === 'function') {
+                onTaskUpdate(updatedTask)
+              } else {
+                try { if (task) { task.dispatched = true; task.status = 'dispatched' } } catch (e) {}
+              }
+            } catch (e) {
+              // ignore
+            }
+
+            // Optionally refresh tasks if parent provided onRefresh
+            try {
+              if (typeof onRefresh === 'function') {
+                await onRefresh()
+              }
+            } catch (e) {
+              // ignore
+            }
+          } catch (e: any) {
+            console.error('dispatch error', e)
+            try { setLocalDispatchError(e && e.message ? String(e.message) : 'Dispatch failed') } catch (e) {}
+            setTimeout(() => { try { setLocalDispatchError(null) } catch (e) {} }, 5000)
+          }
+        }
+
         if (stage === 'Decision') {
           return (
             <div style={{ display: 'flex', gap: 12, marginTop: 14 }}>
@@ -175,7 +251,6 @@ export default function ConversationActionCard({ task, onTaskUpdate, onRefresh }
                   try { if (task) task.status = 'approved' } catch (e) {}
                 }
               } catch (e) {}
-              console.log('Approved (local only)')
             }}>Approve</button>
               <button className="big" style={{ flex: 1, background: '#ef4444', color: '#fff', border: 'none' }} onClick={() => console.log('Reject Selected')}>Reject</button>
             </div>
@@ -185,89 +260,7 @@ export default function ConversationActionCard({ task, onTaskUpdate, onRefresh }
         if (stage === 'Approved') {
           return (
             <div style={{ display: 'flex', gap: 12, marginTop: 14 }}>
-              <button className="big" style={{ flex: 1, background: '#3b82f6', color: '#fff', border: 'none' }} onClick={async () => {
-                // Optimistic update: mark dispatched locally and persist via onTaskUpdate
-                try {
-                  const base = task || {}
-                  const updatedTask = { ...base, status: 'dispatched', dispatched: true, dispatchedAt: new Date().toISOString(), updatedAt: new Date().toISOString() }
-                  if (typeof onTaskUpdate === 'function') {
-                    onTaskUpdate(updatedTask)
-                  } else {
-                    try { if (task) { task.dispatched = true; task.status = 'dispatched' } } catch (e) {}
-                  }
-
-                  // Build dispatch payload
-                  let selectedObj: any = null
-                  try {
-                    if (task && task.selectedAction) {
-                      if (typeof task.selectedAction === 'string') {
-                        selectedObj = (Array.isArray(task.proposedActions) ? task.proposedActions.find((a: any) => a.id === task.selectedAction) : null) || null
-                      } else {
-                        selectedObj = task.selectedAction
-                      }
-                    }
-                  } catch (e) { selectedObj = null }
-
-                  const dispatchPayload: any = {
-                    taskId: updatedTask.taskId,
-                    selectedAction: selectedObj || task && task.selectedAction || null,
-                    instructions: (selectedObj && selectedObj.payload && selectedObj.payload.instructions) || null,
-                    routing: task && task.routing ? task.routing : null,
-                  }
-
-                  // POST to decision endpoint (reuse existing review path)
-                  try {
-                    const selectedActionForPayload = selectedObj || (task && task.selectedAction) || null
-                    const decisionPayload: any = {
-                      taskId: updatedTask.taskId,
-                      decision: 'approved',
-                      policy: (selectedActionForPayload && selectedActionForPayload.type) || null,
-                      selectedAction: selectedActionForPayload,
-                      editedAction: null,
-                      newAction: null,
-                      notes: null,
-                      source: 'taskboard-v2',
-                      createdAt: new Date().toISOString(),
-                    }
-
-                    const headers: any = { 'Content-Type': 'application/json' }
-                    let token: any = null
-                    try {
-                      if (typeof window !== 'undefined') {
-                        token = (window as any).__TASKBOARD_API_TOKEN || (window.localStorage ? window.localStorage.getItem('taskboard_standalone_token') : null)
-                      }
-                    } catch (e) { token = null }
-                    if (token) headers['Authorization'] = `Bearer ${token}`
-
-                    const res = await fetch('/taskboard/api/task/decision', {
-                      method: 'POST',
-                      headers,
-                      body: JSON.stringify(decisionPayload),
-                    })
-
-                    if (!res.ok) {
-                      const text = await res.text()
-                      throw new Error(`Decision dispatch failed: ${res.status} ${res.statusText} ${text}`)
-                    }
-
-                    // Optionally refresh tasks if parent provided onRefresh
-                    try {
-                      if (typeof onRefresh === 'function') {
-                        await onRefresh()
-                      }
-                    } catch (e) {
-                      // ignore
-                    }
-                  } catch (e: any) {
-                    console.error('dispatch error', e)
-                    // non-blocking error: show small banner
-                    try { setLocalDispatchError(e && e.message ? String(e.message) : 'Dispatch failed') } catch (e) {}
-                    setTimeout(() => { try { setLocalDispatchError(null) } catch (e) {} }, 5000)
-                  }
-                } catch (e) {
-                  console.error('Dispatch handler error', e)
-                }
-              }}>Dispatch to Engineering</button>
+              <button className="big" style={{ flex: 1, background: '#3b82f6', color: '#fff', border: 'none' }} onClick={() => handleDispatch()} disabled={!selectedAction}>Dispatch to Engineering</button>
               <button className="big" style={{ flex: 1, background: '#ef4444', color: '#fff', border: 'none' }} onClick={() => console.log('Reject Selected')}>Reject</button>
             </div>
           )
@@ -276,7 +269,7 @@ export default function ConversationActionCard({ task, onTaskUpdate, onRefresh }
         // default: show existing Send + Reject for other stages
         return (
           <div style={{ display: 'flex', gap: 12, marginTop: 14 }}>
-            <button className="big" style={{ flex: 1, background: '#3b82f6', color: '#fff', border: 'none', opacity: selectedAction ? 1 : 0.6 }} onClick={() => console.log('Send to Engineering Team', selectedAction)} disabled={!selectedAction}>Send to Engineering Team</button>
+            <button className="big" style={{ flex: 1, background: '#3b82f6', color: '#fff', border: 'none', opacity: selectedAction ? 1 : 0.6 }} onClick={() => handleDispatch()} disabled={!selectedAction}>Send to Engineering Team</button>
             <button className="big" style={{ flex: 1, background: '#ef4444', color: '#fff', border: 'none' }} onClick={() => console.log('Reject Selected')}>Reject</button>
           </div>
         )

@@ -1,7 +1,7 @@
 import React from 'react'
 import { safeText } from './safeText'
 
-export default function ConversationActionCard({ task }: any) {
+export default function ConversationActionCard({ task, onTaskUpdate }: any) {
   const recs = task && task.proposedActions ? task.proposedActions : [
     'Verify Kafka',
     'Update README',
@@ -38,7 +38,17 @@ export default function ConversationActionCard({ task }: any) {
       </div>
 
       <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
-        <button className="small" onClick={() => console.log('Approve Selected')} style={{ flex: 1 }}>Approve Selected</button>
+        <button className="small" onClick={() => {
+          try {
+            const base = task || {}
+            const updatedTask = { ...base, status: 'approved', decision: 'approved', updatedAt: new Date().toISOString() }
+            if (typeof onTaskUpdate === 'function') {
+              onTaskUpdate(updatedTask)
+            } else {
+              try { if (task) task.status = 'approved' } catch (e) {}
+            }
+          } catch (e) {}
+        }} style={{ flex: 1 }}>Approve Selected</button>
         <button className="small" onClick={() => console.log('Reject Selected')} style={{ flex: 1 }}>Reject</button>
       </div>
     </div>
