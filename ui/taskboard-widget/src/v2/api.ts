@@ -130,7 +130,7 @@ export async function dispatchDecision(task: any, selectedAction?: any) {
     editedAction: null,
     newAction: null,
     notes: null,
-    source: 'taskboard-ui',
+    source: 'taskboard-standalone',
     createdAt: new Date().toISOString(),
   }
 
