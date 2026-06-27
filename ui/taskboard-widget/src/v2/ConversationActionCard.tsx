@@ -1,7 +1,7 @@
 import React, { useState } from 'react'
 import { safeText } from '../components/safeText'
 import { determineStage } from './lifecycle'
-import { dispatchDecision, pollTaskUntilExecution } from './api'
+import { dispatchDecision, pollTaskUntilExecution, postDecision } from './api'
 
 export default function ConversationActionCard({ task, onTaskUpdate, onRefresh }: any) {
   const [localDispatchError, setLocalDispatchError] = useState<string | null>(null)

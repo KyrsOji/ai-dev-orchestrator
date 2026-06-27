@@ -11,3 +11,18 @@ if (path && path.startsWith('/taskboard-v2')) {
 } else {
   root.render(<App />)
 }
+
+// Register service worker for Taskboard V2 when available (safe, opt-in)
+if (typeof window !== 'undefined' && 'serviceWorker' in navigator) {
+  try {
+    if (path && path.startsWith('/taskboard-v2')) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('/taskboard-v2/sw.js', { scope: '/taskboard-v2/' })
+          .then(() => console.log('Taskboard V2 service worker registered'))
+          .catch((e) => console.warn('Service worker registration failed', e))
+      })
+    }
+  } catch (e) {
+    // ignore
+  }
+}

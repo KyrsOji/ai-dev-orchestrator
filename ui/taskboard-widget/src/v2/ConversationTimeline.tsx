@@ -4,6 +4,7 @@ import ConversationMessage from './ConversationMessage'
 import ConversationFollowupCard from './ConversationFollowupCard'
 import ConversationActionCard from './ConversationActionCard'
 import ArtifactsWorkspace from './ArtifactsWorkspace'
+import ExecutionMonitor from './ExecutionMonitor'
 
 export default function ConversationTimeline({ task, followups, onTaskUpdate, onRefresh }: { task: any; followups?: any[]; onTaskUpdate?: (t: any) => void; onRefresh?: () => Promise<void> }) {
   if (!task) return <div style={{ padding: 16 }}>No task selected</div>
@@ -86,6 +87,9 @@ export default function ConversationTimeline({ task, followups, onTaskUpdate, on
 
   return (
     <div style={{ padding: 12 }} className="messages" aria-live="polite">
+      <div style={{ marginBottom: 8 }}>
+        <ExecutionMonitor task={task} />
+      </div>
       {events.map((e) => {
         if (e.type === 'followup' && e.followup) {
           return (

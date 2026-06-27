@@ -234,6 +234,17 @@ function sendTaskboardV2Index(res) {
     res.status(500).send('taskboard-v2 build not found');
   }
 }
+// Serve PWA-specific assets for the v2 shell
+app.get('/taskboard-v2/manifest.webmanifest', (req, res) => {
+  try { return res.sendFile(path.join(distPath, 'manifest.webmanifest')) } catch (e) { return res.status(404).send('not found') }
+});
+app.get('/taskboard-v2/sw.js', (req, res) => {
+  try { return res.sendFile(path.join(distPath, 'sw.js')) } catch (e) { return res.status(404).send('not found') }
+});
+app.get('/taskboard-v2/offline.html', (req, res) => {
+  try { return res.sendFile(path.join(distPath, 'offline.html')) } catch (e) { return res.status(404).send('not found') }
+});
+
 app.get('/taskboard-v2', (req, res) => sendTaskboardV2Index(res));
 app.get('/taskboard-v2/*', (req, res) => sendTaskboardV2Index(res));
 

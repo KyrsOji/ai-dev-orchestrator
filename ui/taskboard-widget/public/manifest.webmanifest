@@ -1,0 +1,15 @@
+{
+  "name": "Engineering Workspace",
+  "short_name": "Engineering",
+  "start_url": "/taskboard-v2/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#3b82f6",
+  "icons": [
+    {
+      "src": "/taskboard-v2/assets/icons/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    }
+  ]
+}

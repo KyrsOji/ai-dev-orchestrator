@@ -219,10 +219,15 @@ export default function TaskboardV2() {
 
   return (
     <div style={{ display: 'flex', gap: 12, padding: 12, height: '100vh', boxSizing: 'border-box' }}>
-      <div style={{ width: 320, overflow: 'auto' }}>
-        <div style={{ padding: 12 }}>
-          <button className="big" onClick={() => { setShowStartModal(true); setStartEngineerId(agents && agents[0] ? agents[0].id : null) }} style={{ width: '100%', background: '#3b82f6', color: '#fff', border: 'none', padding: 12, borderRadius: 10, fontWeight: 800, fontSize: 16 }}>＋ Start Engineering</button>
-          <h2 style={{ marginTop: 12 }}>Engineering Sessions</h2>
+      <div id="left-panel" style={{ width: (localStorage && localStorage.getItem && localStorage.getItem('taskboard_left_collapsed') === '1') ? 56 : 320, overflow: 'auto', transition: 'width 0.18s' }}>
+        <div style={{ padding: 12, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <div style={{ flex: 1 }}>
+            <button className="big" onClick={() => { setShowStartModal(true); setStartEngineerId(agents && agents[0] ? agents[0].id : null) }} style={{ width: '100%', background: '#3b82f6', color: '#fff', border: 'none', padding: 12, borderRadius: 10, fontWeight: 800, fontSize: 16 }}>＋ Start Engineering</button>
+            <h2 style={{ marginTop: 12 }}>Engineering Sessions</h2>
+          </div>
+          <div style={{ marginLeft: 8 }}>
+            <button aria-label="Toggle sessions panel" className="small" onClick={() => { try { const cur = localStorage.getItem('taskboard_left_collapsed'); const next = cur !== '1'; localStorage.setItem('taskboard_left_collapsed', next ? '1' : '0'); window.location.reload(); } catch (e) { /* ignore */ } }} style={{ padding: 8, borderRadius: 8 }}>{localStorage && localStorage.getItem && localStorage.getItem('taskboard_left_collapsed') === '1' ? '▶' : '◀'}</button>
+          </div>
         </div>
         {(!tasks || tasks.length === 0) ? (
           <div style={{ padding: 12, color: '#6b7280' }}>No engineering sessions yet. Start engineering to begin.</div>
@@ -429,10 +434,20 @@ export default function TaskboardV2() {
         </div>
       </div>
 
-      <div style={{ width: 320, overflow: 'auto', padding: 12 }}>
-        <h3>Operations</h3>
-        <OperationsPanel runnerStatus={runnerStatus} agents={agents} />
+      <div id="right-panel" style={{ width: (localStorage && localStorage.getItem && localStorage.getItem('taskboard_right_collapsed') === '1') ? 56 : 320, overflow: 'auto', padding: 12, transition: 'width 0.18s' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <h3 style={{ margin: 0 }}>{(localStorage && localStorage.getItem && localStorage.getItem('taskboard_right_collapsed') === '1') ? '' : 'Operations'}</h3>
+          <div>
+            <button aria-label="Toggle operations panel" className="small" onClick={() => { try { const cur = localStorage.getItem('taskboard_right_collapsed'); const next = cur !== '1'; localStorage.setItem('taskboard_right_collapsed', next ? '1' : '0'); window.location.reload(); } catch (e) { /* ignore */ } }} style={{ padding: 8, borderRadius: 8 }}>{localStorage && localStorage.getItem && localStorage.getItem('taskboard_right_collapsed') === '1' ? '\u25c0' : '\u25b6'}</button>
+          </div>
+        </div>
+        {(localStorage && localStorage.getItem && localStorage.getItem('taskboard_right_collapsed') === '1') ? (
+          <div style={{ paddingTop: 12, textAlign: 'center', color: '#6b7280' }}>Ops</div>
+        ) : (
+          <OperationsPanel runnerStatus={runnerStatus} agents={agents} />
+        )}
       </div>
     </div>
   )
 }
+
