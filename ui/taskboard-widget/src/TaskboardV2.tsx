@@ -266,7 +266,7 @@ export default function TaskboardV2() {
           </div>
         </div>
 
-        <div id="left-panel-content" hidden={leftCollapsed} aria-hidden={leftCollapsed} style={{ display: leftCollapsed ? 'none' : 'block', overflow: 'auto' }}>
+        <div id="left-panel-content" hidden={leftCollapsed} style={{ display: leftCollapsed ? 'none' : 'block', overflow: 'auto' }}>
           {(!tasks || tasks.length === 0) ? (
             <div style={{ padding: 12, color: '#6b7280' }}>No engineering sessions yet. Start engineering to begin.</div>
           ) : (
@@ -485,7 +485,7 @@ export default function TaskboardV2() {
           <div style={{ paddingTop: 12, textAlign: 'center', color: '#6b7280' }}>Ops</div>
         ) : null}
 
-        <div id="right-panel-content" hidden={rightCollapsed} aria-hidden={rightCollapsed} style={{ display: rightCollapsed ? 'none' : 'block' }}>
+        <div id="right-panel-content" hidden={rightCollapsed} style={{ display: rightCollapsed ? 'none' : 'block' }}>
           <OperationsPanel runnerStatus={runnerStatus} agents={agents} />
         </div>
       </div>
