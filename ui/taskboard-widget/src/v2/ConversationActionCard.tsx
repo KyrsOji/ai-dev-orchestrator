@@ -1,7 +1,7 @@
 import React, { useState } from 'react'
 import { safeText } from '../components/safeText'
 import { determineStage } from './lifecycle'
-import { postDecision } from './api'
+import { dispatchDecision } from './api'
 
 export default function ConversationActionCard({ task, onTaskUpdate, onRefresh }: any) {
   const [localDispatchError, setLocalDispatchError] = useState<string | null>(null)
@@ -16,6 +16,7 @@ export default function ConversationActionCard({ task, onTaskUpdate, onRefresh }
   const [description, setDescription] = useState('')
   const [instructions, setInstructions] = useState('')
   const [selectedAction, setSelectedAction] = useState<any>(null)
+  const [isDispatching, setIsDispatching] = useState(false)
 
   // Keep local recs in sync with incoming task prop (UI-only local state)
   React.useEffect(() => {
@@ -86,29 +87,50 @@ export default function ConversationActionCard({ task, onTaskUpdate, onRefresh }
       )}
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-        {recs.map((r: any, i: number) => (
-          <div
-            key={i}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 12,
-              background: selectedAction === r ? '#eef2ff' : 'transparent',
-              padding: 8,
-              borderRadius: 10
-            }}
-            onClick={() => setSelectedAction(r)}
-          >
-            <input aria-label={`select recommendation ${i}`} type="checkbox" checked={selectedAction === r} readOnly />
-            <div style={{ flex: 1, fontWeight: 600 }}>{renderActionLabel(r)}</div>
-          </div>
-        ))}
+        {recs.map((r: any, i: number) => {
+          const rid = (r && (r.id || String(i)))
+          const selected = (() => {
+            if (!selectedAction) return false
+            if (typeof selectedAction === 'string') return selectedAction === rid
+            if (typeof selectedAction === 'object') return (selectedAction && selectedAction.id) === rid
+            return false
+          })()
+
+          return (
+            <div
+              key={rid}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 12,
+                background: selected ? '#eef2ff' : 'transparent',
+                padding: 8,
+                borderRadius: 10,
+                cursor: 'pointer'
+              }}
+              onClick={() => {
+                try {
+                  setSelectedAction(r)
+                  // propagate selection to parent so Dispatch becomes enabled
+                  if (typeof onTaskUpdate === 'function' && task) {
+                    const base = task || {}
+                    const updatedTask = { ...base, selectedAction: r && r.id ? r.id : r, updatedAt: new Date().toISOString() }
+                    onTaskUpdate(updatedTask)
+                  }
+                } catch (e) {}
+              }}
+            >
+              <input aria-label={`select recommendation ${i}`} type="radio" name={`selectedAction-${task && task.taskId || 'task'}`} checked={selected} readOnly />
+              <div style={{ flex: 1, fontWeight: 600 }}>{renderActionLabel(r)}</div>
+            </div>
+          )
+        })}
       </div>
 
       {/* Collapsed CTA */}
       {!showForm && (
         <div style={{ marginTop: 14, display: 'flex', gap: 8, alignItems: 'center' }}>
-          <button className="small" onClick={() => setShowForm(true)} style={{ background: '#fff', border: '1px solid #e6eefc', padding: '6px 10px', borderRadius: 8, color: '#0f172a' }}>+ Custom Action</button>
+          <button className="small" onClick={() => setShowForm(true)} style={{ background: '#fff', border: '1px solid #e6eefc', padding: '6px 10px', borderRadius: 8, color: '#0f172a' }}>+ New Review Decision</button>
           <div style={{ flex: 1 }} />
         </div>
       )}
@@ -117,10 +139,10 @@ export default function ConversationActionCard({ task, onTaskUpdate, onRefresh }
       {showForm && (
         <div style={{ marginTop: 14 }}>
           <div style={{ padding: 12, borderRadius: 12, background: '#f8fafc', border: '1px solid #e6eefc' }}>
-            <div style={{ fontWeight: 800, marginBottom: 8, fontSize: 15 }}>Create Engineering Recommendation</div>
+            <div style={{ fontWeight: 800, marginBottom: 8, fontSize: 15 }}>Create Review Decision</div>
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              <label style={{ fontSize: 13, fontWeight: 700 }}>Recommendation Title</label>
+              <label style={{ fontSize: 13, fontWeight: 700 }}>Decision Title</label>
               <input
                 aria-label="recommendation title"
                 placeholder="Short descriptive title"
@@ -129,7 +151,7 @@ export default function ConversationActionCard({ task, onTaskUpdate, onRefresh }
                 style={{ width: '100%', padding: 10, borderRadius: 10, border: '1px solid #e6eefc', fontSize: 14 }}
               />
 
-              <label style={{ fontSize: 13, fontWeight: 700, marginTop: 6 }}>Engineering Instructions</label>
+              <label style={{ fontSize: 13, fontWeight: 700, marginTop: 6 }}>Decision Instructions</label>
               <textarea
                 aria-label="engineering instructions"
                 placeholder={'Describe exactly what you want the engineering team to do.\nYou can override OpenHands recommendations.\n\nExamples:\n• Refactor reviewer/service.py\n• Add unit tests\n• Improve retry logic\n• Update documentation'}
@@ -151,7 +173,7 @@ export default function ConversationActionCard({ task, onTaskUpdate, onRefresh }
 
               <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
                 <button className="big" onClick={() => { setShowForm(false); setDescription(''); setInstructions('') }} style={{ background: '#f3f4f6', border: 'none', padding: '10px 14px', borderRadius: 10 }}>Cancel</button>
-                <button className="big" onClick={handleCreateRecommendation} style={{ background: '#3b82f6', color: '#fff', border: 'none', padding: '10px 14px', borderRadius: 10 }}>Create Recommendation</button>
+                <button className="big" onClick={handleCreateRecommendation} style={{ background: '#3b82f6', color: '#fff', border: 'none', padding: '10px 14px', borderRadius: 10 }}>Create Review Decision</button>
               </div>
             </div>
           </div>
@@ -164,60 +186,30 @@ export default function ConversationActionCard({ task, onTaskUpdate, onRefresh }
         if (stage === 'Conversation') return null
 
         async function handleDispatch() {
+          if (isDispatching) return
           try {
-            // clear previous error
+            setIsDispatching(true)
             try { setLocalDispatchError(null) } catch (e) {}
-            // Build selectedObj
-            let selectedObj: any = null
-            try {
-              if (task && task.selectedAction) {
-                if (typeof task.selectedAction === 'string') {
-                  selectedObj = (Array.isArray(task.proposedActions) ? task.proposedActions.find((a: any) => a.id === task.selectedAction) : null) || null
-                } else {
-                  selectedObj = task.selectedAction
-                }
-              }
-            } catch (e) { selectedObj = null }
 
-            const decisionPayload: any = {
-              taskId: task && task.taskId,
-              decision: 'approved',
-              policy: (selectedObj && selectedObj.type) || null,
-              selectedAction: selectedObj || (task && task.selectedAction) || null,
-              editedAction: null,
-              newAction: null,
-              notes: null,
-              source: 'taskboard-standalone',
-              createdAt: new Date().toISOString(),
-            }
-
-            await postDecision(decisionPayload)
+            await dispatchDecision(task, selectedAction)
 
             // Update task to dispatched on success
             try {
               const base = task || {}
-              const updatedTask = { ...base, status: 'dispatched', dispatched: true, dispatchedAt: new Date().toISOString(), updatedAt: new Date().toISOString() }
+              const updatedTask = { ...base, status: 'dispatched', dispatched: true, dispatchedAt: new Date().toISOString(), decision: 'approved', updatedAt: new Date().toISOString() }
               if (typeof onTaskUpdate === 'function') {
                 onTaskUpdate(updatedTask)
-              } else {
-                try { if (task) { task.dispatched = true; task.status = 'dispatched' } } catch (e) {}
               }
-            } catch (e) {
-              // ignore
-            }
+            } catch (e) {}
 
-            // Optionally refresh tasks if parent provided onRefresh
-            try {
-              if (typeof onRefresh === 'function') {
-                await onRefresh()
-              }
-            } catch (e) {
-              // ignore
-            }
+            // optionally refresh
+            try { if (typeof onRefresh === 'function') await onRefresh() } catch (e) {}
+
           } catch (e: any) {
             console.error('dispatch error', e)
             try { setLocalDispatchError(e && e.message ? String(e.message) : 'Dispatch failed') } catch (e) {}
-            setTimeout(() => { try { setLocalDispatchError(null) } catch (e) {} }, 5000)
+          } finally {
+            setIsDispatching(false)
           }
         }
 
@@ -308,7 +300,7 @@ export default function ConversationActionCard({ task, onTaskUpdate, onRefresh }
         if (stage === 'Approved') {
           return (
             <div style={{ display: 'flex', gap: 12, marginTop: 14 }}>
-              <button className="big" style={{ flex: 1, background: '#3b82f6', color: '#fff', border: 'none' }} onClick={() => handleDispatch()} disabled={!selectedAction}>Dispatch to Engineering</button>
+              <button className="big" style={{ flex: 1, background: '#3b82f6', color: '#fff', border: 'none' }} onClick={() => handleDispatch()} disabled={!selectedAction || isDispatching}>{isDispatching ? 'Dispatching...' : 'Dispatch to Engineering'}</button>
               <button className="big" style={{ flex: 1, background: '#ef4444', color: '#fff', border: 'none' }} onClick={() => handleReject()}>Reject</button>
             </div>
           )
@@ -329,7 +321,7 @@ export default function ConversationActionCard({ task, onTaskUpdate, onRefresh }
 
 
       <div style={{ marginTop: 8, color: '#6b7280', fontSize: 12 }}>
-        This will approve the selected recommendation and send it for execution once backend wiring is enabled.
+        Approve only sets the task to "approved". Dispatch posts the decision to the engineering pipeline (POST /taskboard/api/task/decision) and marks the task as "dispatched" on success. An error will be shown if the dispatch fails.
       </div>
     </div>
   )

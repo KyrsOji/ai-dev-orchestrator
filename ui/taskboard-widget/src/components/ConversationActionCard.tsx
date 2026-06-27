@@ -1,6 +1,6 @@
 import React, { useState } from 'react'
 import { safeText } from './safeText'
-import { postDecision } from '../v2/api'
+import { postDecision, dispatchDecision } from '../v2/api'
 
 export default function ConversationActionCard({ task, onTaskUpdate }: any) {
   const [localRejectError, setLocalRejectError] = useState<string | null>(null)
@@ -9,6 +9,7 @@ export default function ConversationActionCard({ task, onTaskUpdate }: any) {
     'Update README',
     'Run smoke'
   ]
+  const [selectedId, setSelectedId] = useState<string | null>(null)
 
   function renderActionLabel(a: any) {
     if (a === null || a === undefined) return ''
@@ -64,6 +65,58 @@ export default function ConversationActionCard({ task, onTaskUpdate }: any) {
     }
   }
 
+  async function handleDispatch() {
+    try {
+      try { setLocalRejectError(null) } catch (e) {}
+
+      let selectedObj: any = null
+      try {
+        if (selectedId) {
+          selectedObj = (Array.isArray(recs) ? recs.find((a: any) => (a && a.id ? String(a.id) : String(recs.indexOf(a)))) : null) || selectedId
+        } else if (task && task.selectedAction) {
+          selectedObj = task.selectedAction
+        }
+      } catch (e) { selectedObj = null }
+
+      if (!selectedObj) {
+        throw new Error('No selected action')
+      }
+
+      const decisionPayload: any = {
+        taskId: task && task.taskId,
+        decision: 'approved',
+        policy: (selectedObj && selectedObj.type) || null,
+        selectedAction: selectedObj || (task && task.selectedAction) || null,
+        editedAction: null,
+        newAction: null,
+        notes: null,
+        source: 'taskboard-standalone',
+        createdAt: new Date().toISOString(),
+      }
+
+      await postDecision(decisionPayload)
+
+      // Update task to dispatched on success
+      try {
+        const base = task || {}
+        const updatedTask = { ...base, status: 'dispatched', dispatched: true, dispatchedAt: new Date().toISOString(), updatedAt: new Date().toISOString() }
+        if (typeof onTaskUpdate === 'function') {
+          onTaskUpdate(updatedTask)
+        } else {
+          try { if (task) { task.dispatched = true; task.status = 'dispatched' } } catch (e) {}
+        }
+      } catch (e) {
+        // ignore
+      }
+
+    } catch (e: any) {
+      console.error('dispatch error', e)
+      try { setLocalRejectError(e && e.message ? String(e.message) : 'Dispatch failed') } catch (e) {}
+      setTimeout(() => { try { setLocalRejectError(null) } catch (e) {} }, 5000)
+    }
+  }
+
+
   return (
     <div style={{ padding: 8, borderRadius: 6, border: '1px solid #eee', background: '#fff' }}>
       <div style={{ marginBottom: 8 }}>
@@ -72,12 +125,16 @@ export default function ConversationActionCard({ task, onTaskUpdate }: any) {
       </div>
 
       <div>
-        {recs.map((r: any, i: number) => (
-          <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-            <input type="checkbox" />
-            <div style={{ flex: 1 }}>{renderActionLabel(r)}</div>
-          </div>
-        ))}
+        {recs.map((r: any, i: number) => {
+          const rid = (r && (r.id || String(i)))
+          const checked = selectedId === rid || (!selectedId && task && task.selectedAction && task.selectedAction === rid)
+          return (
+            <div key={rid} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6, cursor: 'pointer' }} onClick={() => setSelectedId(rid)}>
+              <input type="radio" name={`legacy-selected-${task && task.taskId || 'task'}`} checked={checked} readOnly />
+              <div style={{ flex: 1 }}>{renderActionLabel(r)}</div>
+            </div>
+          )
+        })}
       </div>
 
       <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
@@ -92,6 +149,7 @@ export default function ConversationActionCard({ task, onTaskUpdate }: any) {
             }
           } catch (e) {}
         }} style={{ flex: 1 }}>Approve Selected</button>
+        <button className="small" onClick={() => handleDispatch()} style={{ flex: 1 }}>Dispatch Selected</button>
         <button className="small" onClick={() => handleReject()} style={{ flex: 1 }}>Reject</button>
       </div>
 

@@ -96,3 +96,44 @@ export async function postDecision(decisionPayload: any) {
   try { return await res.json() } catch (e) { return { ok: true } }
 }
 
+
+export async function dispatchDecision(task: any, selectedAction?: any) {
+  // Build the selected object from either provided selectedAction or the task
+  let selectedObj: any = null
+  try {
+    if (selectedAction) {
+      if (typeof selectedAction === 'string') {
+        selectedObj = (Array.isArray(task && task.proposedActions) ? task.proposedActions.find((a: any) => a.id === selectedAction) : null) || selectedAction
+      } else {
+        selectedObj = selectedAction
+      }
+    } else if (task && task.selectedAction) {
+      if (typeof task.selectedAction === 'string') {
+        selectedObj = (Array.isArray(task.proposedActions) ? task.proposedActions.find((a: any) => a.id === task.selectedAction) : null) || task.selectedAction
+      } else {
+        selectedObj = task.selectedAction
+      }
+    }
+  } catch (e) {
+    selectedObj = null
+  }
+
+  if (!selectedObj) {
+    throw new Error('No selected action to dispatch')
+  }
+
+  const decisionPayload: any = {
+    taskId: task && task.taskId,
+    decision: 'approved',
+    policy: (selectedObj && selectedObj.type) || null,
+    selectedAction: selectedObj || (task && task.selectedAction) || null,
+    editedAction: null,
+    newAction: null,
+    notes: null,
+    source: 'taskboard-ui',
+    createdAt: new Date().toISOString(),
+  }
+
+  return await postDecision(decisionPayload)
+}
+
