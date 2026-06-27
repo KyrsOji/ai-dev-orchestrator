@@ -13,6 +13,33 @@ export default function TaskboardV2() {
   const [agents, setAgents] = useState<any[]>([])
   const [selectedId, setSelectedId] = useState<string | null>(null)
 
+  // Collapsible side panels (persisted in localStorage). Default collapsed on small screens.
+  const [leftCollapsed, setLeftCollapsed] = useState<boolean>(() => {
+    try {
+      const v = localStorage.getItem('taskboard_left_collapsed')
+      if (v === '1') return true
+      if (v === '0') return false
+    } catch (e) {}
+    if (typeof window !== 'undefined' && window.matchMedia && window.matchMedia('(max-width: 768px)').matches) return true
+    return false
+  })
+  const [rightCollapsed, setRightCollapsed] = useState<boolean>(() => {
+    try {
+      const v = localStorage.getItem('taskboard_right_collapsed')
+      if (v === '1') return true
+      if (v === '0') return false
+    } catch (e) {}
+    if (typeof window !== 'undefined' && window.matchMedia && window.matchMedia('(max-width: 768px)').matches) return true
+    return false
+  })
+
+  useEffect(() => {
+    try { localStorage.setItem('taskboard_left_collapsed', leftCollapsed ? '1' : '0') } catch (e) {}
+  }, [leftCollapsed])
+  useEffect(() => {
+    try { localStorage.setItem('taskboard_right_collapsed', rightCollapsed ? '1' : '0') } catch (e) {}
+  }, [rightCollapsed])
+
   useEffect(() => {
     async function load() {
       try {
@@ -219,18 +246,18 @@ export default function TaskboardV2() {
 
   return (
     <div style={{ display: 'flex', gap: 12, padding: 12, height: '100vh', boxSizing: 'border-box' }}>
-      <div id="left-panel" style={{ width: (localStorage && localStorage.getItem && localStorage.getItem('taskboard_left_collapsed') === '1') ? 56 : 320, overflow: 'auto', transition: 'width 0.18s' }}>
+      <div id="left-panel" style={{ width: leftCollapsed ? 56 : 320, overflow: 'auto', transition: 'width 0.18s' }} aria-hidden={leftCollapsed} aria-label="Engineering sessions">
         <div style={{ padding: 12, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <div style={{ flex: 1 }}>
             <button className="big" onClick={() => { setShowStartModal(true); setStartEngineerId(agents && agents[0] ? agents[0].id : null) }} style={{ width: '100%', background: '#3b82f6', color: '#fff', border: 'none', padding: 12, borderRadius: 10, fontWeight: 800, fontSize: 16 }}>＋ Start Engineering</button>
-            <h2 style={{ marginTop: 12 }}>Engineering Sessions</h2>
+            {!leftCollapsed ? <h2 style={{ marginTop: 12 }}>Engineering Sessions</h2> : null}
           </div>
           <div style={{ marginLeft: 8 }}>
-            <button aria-label="Toggle sessions panel" className="small" onClick={() => { try { const cur = localStorage.getItem('taskboard_left_collapsed'); const next = cur !== '1'; localStorage.setItem('taskboard_left_collapsed', next ? '1' : '0'); window.location.reload(); } catch (e) { /* ignore */ } }} style={{ padding: 8, borderRadius: 8 }}>{localStorage && localStorage.getItem && localStorage.getItem('taskboard_left_collapsed') === '1' ? '▶' : '◀'}</button>
+            <button aria-label="Toggle sessions panel" aria-expanded={!leftCollapsed} aria-controls="left-panel" className="small" onClick={() => setLeftCollapsed(c => !c)} style={{ padding: 8, borderRadius: 8 }}>{leftCollapsed ? '▶' : '◀'}</button>
           </div>
         </div>
         {(!tasks || tasks.length === 0) ? (
-          <div style={{ padding: 12, color: '#6b7280' }}>No engineering sessions yet. Start engineering to begin.</div>
+          <div style={{ padding: 12, color: '#6b7280' }}>{leftCollapsed ? ' ' : 'No engineering sessions yet. Start engineering to begin.'}</div>
         ) : (
           <ConversationList tasks={tasks} selectedId={selectedTask ? selectedTask.taskId : undefined} onSelect={(id) => setSelectedId(id)} />
         )}
@@ -434,14 +461,14 @@ export default function TaskboardV2() {
         </div>
       </div>
 
-      <div id="right-panel" style={{ width: (localStorage && localStorage.getItem && localStorage.getItem('taskboard_right_collapsed') === '1') ? 56 : 320, overflow: 'auto', padding: 12, transition: 'width 0.18s' }}>
+      <div id="right-panel" style={{ width: rightCollapsed ? 56 : 320, overflow: 'auto', padding: 12, transition: 'width 0.18s' }} aria-hidden={rightCollapsed} aria-label="Operations panel">
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <h3 style={{ margin: 0 }}>{(localStorage && localStorage.getItem && localStorage.getItem('taskboard_right_collapsed') === '1') ? '' : 'Operations'}</h3>
+          <h3 style={{ margin: 0 }}>{rightCollapsed ? '' : 'Operations'}</h3>
           <div>
-            <button aria-label="Toggle operations panel" className="small" onClick={() => { try { const cur = localStorage.getItem('taskboard_right_collapsed'); const next = cur !== '1'; localStorage.setItem('taskboard_right_collapsed', next ? '1' : '0'); window.location.reload(); } catch (e) { /* ignore */ } }} style={{ padding: 8, borderRadius: 8 }}>{localStorage && localStorage.getItem && localStorage.getItem('taskboard_right_collapsed') === '1' ? '\u25c0' : '\u25b6'}</button>
+            <button aria-label="Toggle operations panel" aria-expanded={!rightCollapsed} aria-controls="right-panel" className="small" onClick={() => setRightCollapsed(c => !c)} style={{ padding: 8, borderRadius: 8 }}>{rightCollapsed ? '\u25c0' : '\u25b6'}</button>
           </div>
         </div>
-        {(localStorage && localStorage.getItem && localStorage.getItem('taskboard_right_collapsed') === '1') ? (
+        {rightCollapsed ? (
           <div style={{ paddingTop: 12, textAlign: 'center', color: '#6b7280' }}>Ops</div>
         ) : (
           <OperationsPanel runnerStatus={runnerStatus} agents={agents} />
