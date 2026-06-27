@@ -246,7 +246,7 @@ export default function TaskboardV2() {
 
   return (
     <div style={{ display: 'flex', gap: 12, padding: 12, height: '100vh', boxSizing: 'border-box' }}>
-      <div id="left-panel" style={{ width: leftCollapsed ? 56 : 320, overflow: 'hidden', transition: 'width 0.18s', display: 'flex', flexDirection: 'column' }} aria-label="Engineering sessions">
+      <div id="left-panel" style={{ width: leftCollapsed ? 56 : 320, overflow: 'hidden', transition: 'width 0.18s', display: 'flex', flexDirection: 'column', background: leftCollapsed ? '#f8fafc' : 'transparent', borderRight: leftCollapsed ? '1px solid #e6eefc' : '1px solid #eee' }} aria-label="Engineering sessions">
         <div style={{ padding: 12, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 8 }}>
             {leftCollapsed ? (
@@ -262,11 +262,11 @@ export default function TaskboardV2() {
             )}
           </div>
           <div style={{ marginLeft: 8 }}>
-            <button aria-label={leftCollapsed ? 'Expand sessions panel' : 'Collapse sessions panel'} title={leftCollapsed ? 'Expand sessions panel' : 'Collapse sessions panel'} aria-expanded={!leftCollapsed} aria-controls="left-panel-content" className="small" onClick={() => setLeftCollapsed(c => !c)} style={{ padding: 8, borderRadius: 8 }}>{leftCollapsed ? '▶' : '◀'}</button>
+            <button aria-label={leftCollapsed ? 'Expand sessions panel (show list of engineering sessions)' : 'Collapse sessions panel (hide sessions list)'} title={leftCollapsed ? 'Expand sessions panel (show list of engineering sessions)' : 'Collapse sessions panel (hide sessions list)'} aria-expanded={!leftCollapsed} aria-controls="left-panel-content" className="small" onClick={() => setLeftCollapsed(c => !c)} style={{ padding: 8, borderRadius: 8 }}>{leftCollapsed ? '▶' : '◀'}</button>
           </div>
         </div>
 
-        <div id="left-panel-content" aria-hidden={leftCollapsed} style={{ display: leftCollapsed ? 'none' : 'block', overflow: 'auto' }}>
+        <div id="left-panel-content" hidden={leftCollapsed} aria-hidden={leftCollapsed} style={{ display: leftCollapsed ? 'none' : 'block', overflow: 'auto' }}>
           {(!tasks || tasks.length === 0) ? (
             <div style={{ padding: 12, color: '#6b7280' }}>No engineering sessions yet. Start engineering to begin.</div>
           ) : (
@@ -473,11 +473,11 @@ export default function TaskboardV2() {
         </div>
       </div>
 
-      <div id="right-panel" style={{ width: rightCollapsed ? 56 : 320, overflow: 'hidden', padding: 12, transition: 'width 0.18s' }} aria-label="Operations panel">
+      <div id="right-panel" style={{ width: rightCollapsed ? 56 : 320, overflow: 'hidden', padding: 12, transition: 'width 0.18s', background: rightCollapsed ? '#f8fafc' : 'transparent', borderLeft: rightCollapsed ? '1px solid #e6eefc' : '1px solid #eee' }} aria-label="Operations panel">
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <h3 style={{ margin: 0 }}>{rightCollapsed ? '' : 'Operations'}</h3>
           <div>
-            <button aria-label={rightCollapsed ? 'Expand operations panel' : 'Collapse operations panel'} title={rightCollapsed ? 'Expand operations panel' : 'Collapse operations panel'} aria-expanded={!rightCollapsed} aria-controls="right-panel-content" className="small" onClick={() => setRightCollapsed(c => !c)} style={{ padding: 8, borderRadius: 8 }}>{rightCollapsed ? '\u25c0' : '\u25b6'}</button>
+            <button aria-label={rightCollapsed ? 'Expand operations panel (show runner status and tools)' : 'Collapse operations panel (hide operations)'} title={rightCollapsed ? 'Expand operations panel (show runner status and tools)' : 'Collapse operations panel (hide operations)'} aria-expanded={!rightCollapsed} aria-controls="right-panel-content" className="small" onClick={() => setRightCollapsed(c => !c)} style={{ padding: 8, borderRadius: 8 }}>{rightCollapsed ? '\u25c0' : '\u25b6'}</button>
           </div>
         </div>
 
@@ -485,7 +485,7 @@ export default function TaskboardV2() {
           <div style={{ paddingTop: 12, textAlign: 'center', color: '#6b7280' }}>Ops</div>
         ) : null}
 
-        <div id="right-panel-content" aria-hidden={rightCollapsed} style={{ display: rightCollapsed ? 'none' : 'block' }}>
+        <div id="right-panel-content" hidden={rightCollapsed} aria-hidden={rightCollapsed} style={{ display: rightCollapsed ? 'none' : 'block' }}>
           <OperationsPanel runnerStatus={runnerStatus} agents={agents} />
         </div>
       </div>
