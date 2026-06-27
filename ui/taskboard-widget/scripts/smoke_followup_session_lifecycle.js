@@ -176,7 +176,9 @@ async function sleep(ms) { return new Promise(r => setTimeout(r, ms)) }
     afterSessions,
     duplicateReviewHeadings: null,
     prevExecPreserved: false,
+    prevSessionImmutable: null,
     newSessionAttached: false,
+    activeSessionStatus: null,
     approveStatus: null,
     dispatched: null,
     dispatchResponseStatus: null
@@ -222,6 +224,15 @@ async function sleep(ms) { return new Promise(r => setTimeout(r, ms)) }
       const activeId = afterApprove.activeSessionId || (afterApprove.sessions.length ? afterApprove.sessions[afterApprove.sessions.length-1].sessionId : null)
       const act = afterApprove.sessions.find(s => s && s.sessionId === activeId)
       results.approveStatus = (act && act.approval && act.approval.value === true) ? 'approved' : ((act && act.approval) ? 'present' : 'none')
+      results.activeSessionStatus = act && act.status ? String(act.status) : null
+
+      // previous session still immutable and Complete
+      try {
+        const prev = afterApprove.sessions.find(s => s && s.sessionId === oldSessionId)
+        if (prev) {
+          results.prevSessionImmutable = !!prev.immutable
+        }
+      } catch (e) { results.prevSessionImmutable = null }
     }
   } catch (e) {
     console.error('Approve step failed', e)
@@ -277,6 +288,10 @@ async function sleep(ms) { return new Promise(r => setTimeout(r, ms)) }
   let exitCode = 0
   if (!(afterSessions >= (beforeSessions + 1))) exitCode = 2
   if (results.duplicateReviewHeadings !== 1) exitCode = 2
+  // fail if approval was not persisted
+  if (results.approveStatus !== 'approved') exitCode = 2
+  // ensure previous session remains immutable
+  if (results.prevSessionImmutable !== true) exitCode = 2
   // allow dispatch/new execution to be optional
 
   process.exit(exitCode)

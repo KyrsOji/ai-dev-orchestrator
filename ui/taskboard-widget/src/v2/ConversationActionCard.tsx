@@ -509,30 +509,79 @@ export default function ConversationActionCard({ task, onTaskUpdate, onRefresh }
                   }
                 } catch (e) { selId = null }
 
-                const updatedTask: any = {
-                  ...base,
-                  status: 'approved',
-                  decision: 'approved',
-                  approved: true,
-                  approvedAt: new Date().toISOString(),
-                  selectedAction: selId,
-                  updatedAt: new Date().toISOString(),
-                  lastActivityAt: new Date().toISOString(),
-                }
-
-                // If this approval is for a follow-up, preserve followUp metadata
+                // Normalize sessions and update active session approval
                 try {
-                  const isFollowupSelected = Boolean((selId && Array.isArray(base.proposedActions) && base.proposedActions.find((a: any) => a.id === selId && a.followup)) || (base && String(base.status).toLowerCase() === 'followup') || (base.followUp && base.followUp.active && base.followUp.id === selId))
-                  if (isFollowupSelected) {
-                    updatedTask.followUp = { ...(base.followUp || {}), id: selId, approvedAt: new Date().toISOString(), active: true }
-                  }
-                } catch (e) {}
+                  const normalized = normalizeTaskSessions(base)
+                  const sessions = Array.isArray(normalized.sessions) ? normalized.sessions.slice() : []
+                  const activeId = normalized.activeSessionId || (sessions.length ? sessions[sessions.length - 1].sessionId : null)
+                  const now = new Date().toISOString()
 
-                if (typeof onTaskUpdate === 'function') {
-                  onTaskUpdate(updatedTask)
-                } else {
-                  try { if (task) { task.status = 'approved'; task.decision = 'approved' } } catch (e) {}
+                  let updatedSessions = sessions.map((s: any) => {
+                    if (s && s.sessionId === activeId) {
+                      const reviewDecision = s.reviewDecision ? { ...s.reviewDecision } : { proposals: [] }
+                      if (selId) reviewDecision.selectedActionId = selId
+                      return { ...s, reviewDecision, selectedActionId: selId || s.selectedActionId || null, approval: { value: true, approver: 'human', approvedAt: now }, status: 'Approved', updatedAt: now }
+                    }
+                    return s
+                  })
+
+                  // If no active session found, create one
+                  if (!activeId) {
+                    const newSession = { sessionId: 'sess-' + Date.now().toString(36), title: base.title || 'Follow-up', createdAt: now, updatedAt: now, messages: [], reviewDecision: { proposals: [], selectedActionId: selId || null }, selectedActionId: selId || null, approval: { value: true, approver: 'human', approvedAt: now }, dispatch: null, executionReport: null, artifacts: [], timeline: [], status: 'Approved', immutable: false }
+                    updatedSessions.push(newSession)
+                    normalized.activeSessionId = newSession.sessionId
+                  } else {
+                    normalized.activeSessionId = activeId
+                  }
+
+                  const updatedNormalized: any = { ...normalized, sessions: updatedSessions, updatedAt: now }
+
+                  // Top-level compatibility fields
+                  updatedNormalized.status = 'approved'
+                  updatedNormalized.decision = 'approved'
+                  updatedNormalized.approved = true
+                  updatedNormalized.approvedAt = now
+                  updatedNormalized.selectedAction = selId || updatedNormalized.selectedAction || null
+
+                  // If this approval is for a follow-up, preserve followUp metadata
+                  try {
+                    const isFollowupSelected = Boolean((selId && Array.isArray(base.proposedActions) && base.proposedActions.find((a: any) => a.id === selId && a.followup)) || (base && String(base.status).toLowerCase() === 'followup') || (base.followUp && base.followUp.active && base.followUp.id === selId))
+                    if (isFollowupSelected) {
+                      updatedNormalized.followUp = { ...(base.followUp || {}), id: selId, approvedAt: now, active: true }
+                    }
+                  } catch (e) {}
+
+                  if (typeof onTaskUpdate === 'function') {
+                    onTaskUpdate(updatedNormalized)
+                  } else {
+                    try { if (task) { task.status = 'approved'; task.decision = 'approved'; task.approved = true } } catch (e) {}
+                  }
+                } catch (e) {
+                  // Fallback to legacy top-level update if session normalization fails
+                  const updatedTask: any = {
+                    ...base,
+                    status: 'approved',
+                    decision: 'approved',
+                    approved: true,
+                    approvedAt: new Date().toISOString(),
+                    selectedAction: selId,
+                    updatedAt: new Date().toISOString(),
+                    lastActivityAt: new Date().toISOString(),
+                  }
+                  try {
+                    const isFollowupSelected = Boolean((selId && Array.isArray(base.proposedActions) && base.proposedActions.find((a: any) => a.id === selId && a.followup)) || (base && String(base.status).toLowerCase() === 'followup') || (base.followUp && base.followUp.active && base.followUp.id === selId))
+                    if (isFollowupSelected) {
+                      updatedTask.followUp = { ...(base.followUp || {}), id: selId, approvedAt: new Date().toISOString(), active: true }
+                    }
+                  } catch (e) {}
+
+                  if (typeof onTaskUpdate === 'function') {
+                    onTaskUpdate(updatedTask)
+                  } else {
+                    try { if (task) { task.status = 'approved'; task.decision = 'approved' } } catch (e) {}
+                  }
                 }
+
               } catch (e) {}
             }}>Approve</button>
               <button className="big" style={{ flex: 1, background: '#ef4444', color: '#fff', border: 'none' }} onClick={() => handleReject()}>Reject</button>
