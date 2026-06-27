@@ -1,7 +1,9 @@
-import React from 'react'
+import React, { useState } from 'react'
 import { safeText } from './safeText'
+import { postDecision } from '../v2/api'
 
 export default function ConversationActionCard({ task, onTaskUpdate }: any) {
+  const [localRejectError, setLocalRejectError] = useState<string | null>(null)
   const recs = task && task.proposedActions ? task.proposedActions : [
     'Verify Kafka',
     'Update README',
@@ -19,6 +21,47 @@ export default function ConversationActionCard({ task, onTaskUpdate }: any) {
       return safeText(a)
     }
     return safeText(a)
+  }
+
+  async function handleReject() {
+    try {
+      try { setLocalRejectError(null) } catch (e) {}
+
+      const decisionPayload: any = {
+        taskId: task && task.taskId,
+        decision: 'rejected',
+        policy: null,
+        selectedAction: null,
+        editedAction: null,
+        newAction: null,
+        notes: null,
+        source: 'taskboard-v2',
+        createdAt: new Date().toISOString(),
+      }
+
+      try {
+        await postDecision(decisionPayload)
+
+        // Update task to rejected on success
+        try {
+          const base = task || {}
+          const updatedTask = { ...base, status: 'rejected', decision: 'rejected', rejected: true, rejectedAt: new Date().toISOString(), updatedAt: new Date().toISOString() }
+          if (typeof onTaskUpdate === 'function') {
+            onTaskUpdate(updatedTask)
+          } else {
+            try { if (task) { task.rejected = true; task.status = 'rejected'; task.decision = 'rejected' } } catch (e) {}
+          }
+        } catch (e) {
+          // ignore
+        }
+      } catch (e: any) {
+        console.error('reject dispatch error', e)
+        try { setLocalRejectError(e && e.message ? String(e.message) : 'Reject failed') } catch (e) {}
+        setTimeout(() => { try { setLocalRejectError(null) } catch (e) {} }, 5000)
+      }
+    } catch (e) {
+      console.error('reject handler error', e)
+    }
   }
 
   return (
@@ -49,8 +92,12 @@ export default function ConversationActionCard({ task, onTaskUpdate }: any) {
             }
           } catch (e) {}
         }} style={{ flex: 1 }}>Approve Selected</button>
-        <button className="small" onClick={() => console.log('Reject Selected')} style={{ flex: 1 }}>Reject</button>
+        <button className="small" onClick={() => handleReject()} style={{ flex: 1 }}>Reject</button>
       </div>
+
+      {localRejectError ? (
+        <div style={{ marginTop: 8, padding: 8, background: '#fee2e2', color: '#7f1d1d', borderRadius: 8 }}>{localRejectError}</div>
+      ) : null}
     </div>
   )
 }

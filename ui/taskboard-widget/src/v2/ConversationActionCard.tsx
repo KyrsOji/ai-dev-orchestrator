@@ -1,6 +1,7 @@
 import React, { useState } from 'react'
 import { safeText } from '../components/safeText'
 import { determineStage } from './lifecycle'
+import { postDecision } from './api'
 
 export default function ConversationActionCard({ task, onTaskUpdate, onRefresh }: any) {
   const [localDispatchError, setLocalDispatchError] = useState<string | null>(null)
@@ -190,25 +191,7 @@ export default function ConversationActionCard({ task, onTaskUpdate, onRefresh }
               createdAt: new Date().toISOString(),
             }
 
-            const headers: any = { 'Content-Type': 'application/json' }
-            let token: any = null
-            try {
-              if (typeof window !== 'undefined') {
-                token = (window as any).__TASKBOARD_API_TOKEN || (window.localStorage ? window.localStorage.getItem('taskboard_standalone_token') : null)
-              }
-            } catch (e) { token = null }
-            if (token) headers['Authorization'] = `Bearer ${token}`
-
-            const res = await fetch('/taskboard/api/task/decision', {
-              method: 'POST',
-              headers,
-              body: JSON.stringify(decisionPayload),
-            })
-
-            if (!res.ok) {
-              const text = await res.text()
-              throw new Error(`Decision dispatch failed: ${res.status} ${res.statusText} ${text}`)
-            }
+            await postDecision(decisionPayload)
 
             // Update task to dispatched on success
             try {
@@ -238,6 +221,69 @@ export default function ConversationActionCard({ task, onTaskUpdate, onRefresh }
           }
         }
 
+        async function handleReject(notes?: string) {
+          try {
+            try { setLocalDispatchError(null) } catch (e) {}
+
+            // Build selectedObj similar to dispatch
+            let selectedObj: any = null
+            try {
+              if (task && task.selectedAction) {
+                if (typeof task.selectedAction === 'string') {
+                  selectedObj = (Array.isArray(task.proposedActions) ? task.proposedActions.find((a: any) => a.id === task.selectedAction) : null) || null
+                } else {
+                  selectedObj = task.selectedAction
+                }
+              }
+            } catch (e) { selectedObj = null }
+
+            const decisionPayload: any = {
+              taskId: task && task.taskId,
+              decision: 'rejected',
+              policy: (selectedObj && selectedObj.type) || null,
+              selectedAction: selectedObj || (task && task.selectedAction) || null,
+              editedAction: null,
+              newAction: null,
+              notes: notes || null,
+              source: 'taskboard-v2',
+              createdAt: new Date().toISOString(),
+            }
+
+            try {
+              await postDecision(decisionPayload)
+
+              // Update task to rejected on success
+              try {
+                const base = task || {}
+                const updatedTask = { ...base, status: 'rejected', decision: 'rejected', rejected: true, rejectedAt: new Date().toISOString(), updatedAt: new Date().toISOString() }
+                if (typeof onTaskUpdate === 'function') {
+                  onTaskUpdate(updatedTask)
+                } else {
+                  try { if (task) { task.rejected = true; task.status = 'rejected'; task.decision = 'rejected' } } catch (e) {}
+                }
+              } catch (e) {
+                // ignore
+              }
+
+              // Optionally refresh tasks if parent provided onRefresh
+              try {
+                if (typeof onRefresh === 'function') {
+                  await onRefresh()
+                }
+              } catch (e) {
+                // ignore
+              }
+            } catch (e: any) {
+              console.error('reject dispatch error', e)
+              try { setLocalDispatchError(e && e.message ? String(e.message) : 'Reject failed') } catch (e) {}
+              setTimeout(() => { try { setLocalDispatchError(null) } catch (e) {} }, 5000)
+            }
+          } catch (e) {
+            console.error('reject handler error', e)
+          }
+        }
+
+
         if (stage === 'Decision') {
           return (
             <div style={{ display: 'flex', gap: 12, marginTop: 14 }}>
@@ -252,8 +298,10 @@ export default function ConversationActionCard({ task, onTaskUpdate, onRefresh }
                 }
               } catch (e) {}
             }}>Approve</button>
-              <button className="big" style={{ flex: 1, background: '#ef4444', color: '#fff', border: 'none' }} onClick={() => console.log('Reject Selected')}>Reject</button>
+              <button className="big" style={{ flex: 1, background: '#ef4444', color: '#fff', border: 'none' }} onClick={() => handleReject()}>Reject</button>
             </div>
+
+
           )
         }
 
@@ -261,7 +309,7 @@ export default function ConversationActionCard({ task, onTaskUpdate, onRefresh }
           return (
             <div style={{ display: 'flex', gap: 12, marginTop: 14 }}>
               <button className="big" style={{ flex: 1, background: '#3b82f6', color: '#fff', border: 'none' }} onClick={() => handleDispatch()} disabled={!selectedAction}>Dispatch to Engineering</button>
-              <button className="big" style={{ flex: 1, background: '#ef4444', color: '#fff', border: 'none' }} onClick={() => console.log('Reject Selected')}>Reject</button>
+              <button className="big" style={{ flex: 1, background: '#ef4444', color: '#fff', border: 'none' }} onClick={() => handleReject()}>Reject</button>
             </div>
           )
         }
@@ -270,7 +318,7 @@ export default function ConversationActionCard({ task, onTaskUpdate, onRefresh }
         return (
           <div style={{ display: 'flex', gap: 12, marginTop: 14 }}>
             <button className="big" style={{ flex: 1, background: '#3b82f6', color: '#fff', border: 'none', opacity: selectedAction ? 1 : 0.6 }} onClick={() => handleDispatch()} disabled={!selectedAction}>Send to Engineering Team</button>
-            <button className="big" style={{ flex: 1, background: '#ef4444', color: '#fff', border: 'none' }} onClick={() => console.log('Reject Selected')}>Reject</button>
+            <button className="big" style={{ flex: 1, background: '#ef4444', color: '#fff', border: 'none' }} onClick={() => handleReject()}>Reject</button>
           </div>
         )
       })()}

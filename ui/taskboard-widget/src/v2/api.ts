@@ -72,3 +72,27 @@ export async function fetchAgents() {
 
   return normalized
 }
+
+export async function postDecision(decisionPayload: any) {
+  const headers: any = { 'Content-Type': 'application/json' }
+  let token: any = null
+  try {
+    if (typeof window !== 'undefined') {
+      token = (window as any).__TASKBOARD_API_TOKEN || (window.localStorage ? window.localStorage.getItem('taskboard_standalone_token') : null)
+    }
+  } catch (e) { token = null }
+  if (token) headers['Authorization'] = `Bearer ${token}`
+
+  const res = await fetch('/taskboard/api/task/decision', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(decisionPayload),
+  })
+
+  if (!res.ok) {
+    const text = await res.text()
+    throw new Error(`Decision dispatch failed: ${res.status} ${res.statusText} ${text}`)
+  }
+  try { return await res.json() } catch (e) { return { ok: true } }
+}
+
