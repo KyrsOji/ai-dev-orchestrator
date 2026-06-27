@@ -12,6 +12,33 @@ function formatIso(iso: any) {
   } catch (e) { return String(iso) }
 }
 
+function formatDurationSeconds(sec: any) {
+  try {
+    const s = Number(sec)
+    if (!isFinite(s)) return null
+    const abs = Math.max(0, Math.floor(s))
+    const hours = Math.floor(abs / 3600)
+    const minutes = Math.floor((abs % 3600) / 60)
+    const seconds = abs % 60
+    if (hours > 0) return `${hours}h ${minutes}m ${seconds}s`
+    if (minutes > 0) return `${minutes}m ${seconds}s`
+    return `${seconds}s`
+  } catch (e) { return null }
+}
+
+function formatDurationFromTimestamps(start: any, end: any) {
+  try {
+    if (!start) return null
+    const s = new Date(start).getTime()
+    if (isNaN(s)) return null
+    const e = end ? new Date(end).getTime() : Date.now()
+    if (isNaN(e)) return null
+    const ms = Math.max(0, e - s)
+    const sec = Math.floor(ms / 1000)
+    return formatDurationSeconds(sec)
+  } catch (e) { return null }
+}
+
 function computePhaseFromTask(t: any) {
   if (!t) return 'Queued'
   const exec = t.executionReport || t.execution || t.execution_report || null
@@ -153,6 +180,9 @@ export default function ExecutionMonitor({ task, openExecutionDetails }: { task:
 
   const exec = t.executionReport || t.execution || t.execution_report || null
 
+  const execPhase = exec && (exec.phase || exec.stage || exec.step || exec.currentPhase) || null
+
+
   // Prefer explicit execution duration; otherwise derive from timestamps (and show live elapsed when running)
   const durationRaw = exec && (exec.executionDurationSeconds || exec.duration || exec.elapsed || exec.time)
   const startedRaw = exec && (exec.startedAt || exec.executionStartedAt || exec.execution_started_at || exec.startTime || exec.createdAt)
@@ -224,7 +254,7 @@ export default function ExecutionMonitor({ task, openExecutionDetails }: { task:
       <div style={{ display: 'flex', flexDirection: 'column', gap: 6, flex: 1 }}>
         <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
           <div style={{ fontSize: 13, color: '#6b7280' }}>Phase</div>
-          <div style={{ fontWeight: 800 }}>{phase}{isPolling ? ' \u00b7 polling' : ''}</div>
+          <div style={{ fontWeight: 800 }}>{phase}{execPhase && execPhase !== phase ? (' — ' + String(execPhase)) : ''}{isPolling ? ' \u00b7 polling' : ''}</div>
           <div style={{ marginLeft: 'auto', fontSize: 12, color: '#6b7280' }}>Last: {lastActivity ? formatIso(lastActivity) : 'unknown'}</div>
         </div>
 

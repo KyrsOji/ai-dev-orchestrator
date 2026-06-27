@@ -161,21 +161,25 @@ export default function TaskboardV2() {
     // Runner: prefer routing -> per-task executionReport runner fields -> global runnerStatus fallback
     try {
       const exec = (selectedTask && (selectedTask.executionReport || selectedTask.execution || selectedTask.execution_report)) || null
-      const routingAgent = selectedTask && selectedTask.routing && (selectedTask.routing.selectedAgentId || selectedTask.routing.selectedHostname)
+      const routingAgent = selectedTask && selectedTask.routing && (selectedTask.routing.selectedAgentId || selectedTask.routing.selectedAgent || (selectedTask.routing.selected && (selectedTask.routing.selected.agentId || selectedTask.routing.selected.agent)) || selectedTask.routing.selectedHostname)
       if (routingAgent && agents && Array.isArray(agents)) {
         const a = agents.find((x) => x && (x.id === routingAgent || x.agentId === routingAgent || x.hostname === routingAgent))
         if (a) headerRunner = deriveFriendlyProfile(a).name
       }
       if (!headerRunner && exec) {
-        headerRunner = exec.runner || exec.agentId || exec.executor || exec.host || exec.hostname || ''
+        headerRunner = exec.runner || exec.agentId || exec.executor || exec.host || exec.hostname || (exec.agent && (exec.agent.name || exec.agent.id)) || ''
         if (headerRunner && typeof headerRunner === 'object') headerRunner = headerRunner.name || headerRunner.id || ''
+      }
+      if (!headerRunner) {
+        headerRunner = selectedTask.runner || selectedTask.agentId || ''
       }
       if (!headerRunner && runnerStatus && runnerStatus.status) headerRunner = runnerStatus.status
     } catch (e) { headerRunner = '' }
 
-    // Reviewer: prefer explicit reviewer/decision fields
+    // Reviewer: prefer explicit reviewer/decision fields (fall back to approval state)
     try {
       headerReviewer = selectedTask.reviewerSummary || selectedTask.reviewer || selectedTask.approver || selectedTask.decision || ''
+      if (!headerReviewer && selectedTask.approved) headerReviewer = selectedTask.approver || 'Approved'
       if (headerReviewer && typeof headerReviewer === 'object') headerReviewer = headerReviewer.name || headerReviewer.id || String(headerReviewer)
       if (headerReviewer) headerReviewer = String(headerReviewer).slice(0, 60)
     } catch (e) { headerReviewer = '' }
@@ -183,7 +187,9 @@ export default function TaskboardV2() {
     // Kafka / published state
     try {
       const exec = (selectedTask && (selectedTask.executionReport || selectedTask.execution || selectedTask.execution_report)) || null
-      if (selectedTask.dispatched || selectedTask.dispatchedAt) {
+      if (selectedTask.kafka) {
+        headerKafka = String(selectedTask.kafka)
+      } else if (selectedTask.dispatched || selectedTask.dispatchedAt) {
         headerKafka = 'Delivered'
       } else if (exec && (exec.publishedAt || exec.published || exec.kafka)) {
         headerKafka = exec.publishedAt ? 'Published' : (exec.published ? 'Published' : (exec.kafka ? String(exec.kafka) : 'Published'))
@@ -261,10 +267,39 @@ export default function TaskboardV2() {
   const [saveMessage, setSaveMessage] = useState<string | null>(null)
 
   async function handleTaskUpdate(updatedTask: any) {
-    // optimistic local update: replace existing task or add if not present
+    // Merge execution history if necessary: preserve prior executionReport(s)
     setTasks((prev) => {
       const idx = prev.findIndex((t) => t && t.taskId === updatedTask.taskId)
       const next = prev.slice()
+
+      try {
+        if (idx !== -1) {
+          const existing = prev[idx]
+          // If existing has an executionReport and updatedTask also has one but they are different, preserve existing in executionHistory
+          const existingExec = existing && (existing.executionReport || existing.execution || existing.execution_report) || null
+          const newExec = updatedTask && (updatedTask.executionReport || updatedTask.execution || updatedTask.execution_report) || null
+          if (existingExec && newExec) {
+            try {
+              const existingId = existingExec.id || existingExec.runId || existingExec.runDirectory || existingExec.startedAt || existingExec.createdAt || JSON.stringify(existingExec)
+              const newId = newExec.id || newExec.runId || newExec.runDirectory || newExec.startedAt || newExec.createdAt || JSON.stringify(newExec)
+              if (existingId !== newId) {
+                const history = Array.isArray(updatedTask.executionHistory) ? updatedTask.executionHistory.slice() : []
+                // avoid duplicate insertion: compare by a simple string key
+                const key = existingExec.id || existingExec.runDirectory || existingExec.startedAt || existingExec.createdAt || JSON.stringify(existingExec)
+                const existsAlready = history.some((h: any) => {
+                  const k = h && (h.id || h.runDirectory || h.startedAt || h.createdAt) || JSON.stringify(h)
+                  return k === key
+                })
+                if (!existsAlready) history.push(existingExec)
+                updatedTask = { ...updatedTask, executionHistory: history }
+              }
+            } catch (e) {
+              // ignore history merge errors
+            }
+          }
+        }
+      } catch (e) {}
+
       if (idx === -1) {
         // add to front so it is visible
         next.unshift(updatedTask)
@@ -360,7 +395,7 @@ export default function TaskboardV2() {
           </div>
         </div>
 
-        <div id="left-panel-content" aria-hidden={leftCollapsed ? 'true' : 'false'} hidden={leftCollapsed} className="drawer-content" style={{ display: leftCollapsed ? 'none' : 'block', overflow: 'auto' }}>
+        <div id="left-panel-content" aria-hidden={leftCollapsed} hidden={leftCollapsed} className="drawer-content" style={{ display: (!isMobile && leftCollapsed) ? 'none' : 'block', overflow: 'auto' }}>
           {(!tasks || tasks.length === 0) ? (
             <div style={{ padding: 12, color: '#6b7280' }}>No engineering sessions yet. Start engineering to begin.</div>
           ) : (
@@ -370,7 +405,7 @@ export default function TaskboardV2() {
 
         {/* Mobile backdrop */}
         {isMobile && !leftCollapsed ? (
-          <div className="drawer-backdrop" onClick={() => setLeftCollapsed(true)} aria-hidden="true" />
+          <div className="drawer-backdrop" onClick={() => setLeftCollapsed(true)} aria-hidden={true} />
         ) : null}
 
         {/* Floating reopen button on desktop */}
@@ -603,14 +638,14 @@ export default function TaskboardV2() {
 
         {/* Mobile backdrop */}
         {isMobile && !rightCollapsed ? (
-          <div className="drawer-backdrop" onClick={() => setRightCollapsed(true)} aria-hidden="true" />
+          <div className="drawer-backdrop" onClick={() => setRightCollapsed(true)} aria-hidden={true} />
         ) : null}
 
         {rightCollapsed ? (
           <div style={{ paddingTop: 12, textAlign: 'center', color: '#6b7280', fontWeight: 700 }}>Ops</div>
         ) : null}
 
-        <div id="right-panel-content" aria-hidden={rightCollapsed ? 'true' : 'false'} hidden={rightCollapsed} className="drawer-content" style={{ display: rightCollapsed ? 'none' : 'block' }}>
+        <div id="right-panel-content" aria-hidden={rightCollapsed} hidden={rightCollapsed} className="drawer-content" style={{ display: (!isMobile && rightCollapsed) ? 'none' : 'block' }}>
           <OperationsPanel runnerStatus={runnerStatus} agents={agents} />
         </div>
 

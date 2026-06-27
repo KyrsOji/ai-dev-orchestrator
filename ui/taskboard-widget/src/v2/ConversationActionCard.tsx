@@ -49,6 +49,16 @@ export default function ConversationActionCard({ task, onTaskUpdate, onRefresh }
   })()
   // Compute lifecycle stage for conditional rendering
   const stage = determineStage(task)
+  // Derived collections: separate follow-up recommendations from historical ones
+  const allRecs = Array.isArray(task && task.proposedActions) ? task.proposedActions.slice() : []
+  const followups = allRecs.filter((r: any) => r && r.followup)
+  const historyRecs = allRecs.filter((r: any) => !(r && r.followup))
+
+  // Execution history helpers: preserve prior executions in executionHistory
+  const executionHistory = Array.isArray(task && task.executionHistory) ? task.executionHistory.slice() : []
+  const currentExec = task && (task.executionReport || task.execution || task.execution_report) || null
+  const priorExecToShow = executionHistory.length ? executionHistory[executionHistory.length - 1] : (currentExec || null)
+  const hasPriorExecution = Boolean(priorExecToShow)
 
 
 
@@ -70,7 +80,9 @@ export default function ConversationActionCard({ task, onTaskUpdate, onRefresh }
       type: 'manual',
       id: 'custom-' + Date.now(),
       description: description,
-      payload: { instructions }
+      payload: { instructions },
+      // mark follow-up when creating from a completed task
+      followup: (stage === 'Complete') ? true : false,
     }
 
     // update local UI state immediately
@@ -85,7 +97,16 @@ export default function ConversationActionCard({ task, onTaskUpdate, onRefresh }
       const msg = { id: 'msg-' + Date.now(), author: 'user', text: (instructions && instructions.length) ? instructions : (description || ''), createdAt: new Date().toISOString() }
       existingMessages.push(msg)
 
-      const updatedTask = { ...base, messages: existingMessages, proposedActions: [...(Array.isArray(base.proposedActions) ? base.proposedActions : []), newAction], selectedAction: newAction.id, updatedAt: new Date().toISOString(), lastActivityAt: new Date().toISOString() }
+      let updatedTask: any = { ...base, messages: existingMessages, proposedActions: [...(Array.isArray(base.proposedActions) ? base.proposedActions : []), newAction], selectedAction: newAction.id, updatedAt: new Date().toISOString(), lastActivityAt: new Date().toISOString() }
+
+      // If this is a follow-up on a completed task, mark follow-up metadata and set followup status
+      try {
+        if (stage === 'Complete') {
+          updatedTask.status = 'followup'
+          updatedTask.followUp = { active: true, id: newAction.id, createdAt: new Date().toISOString(), parentExecutionId: (base && (base.executionReport || base.execution || base.execution_report) && ((base.executionReport && (base.executionReport.id || base.executionReport.runId)) || (base.execution && (base.execution.id || base.execution.runId)) || null)) || null }
+        }
+      } catch (e) {}
+
       if (typeof onTaskUpdate === 'function') {
         onTaskUpdate(updatedTask)
       }
@@ -102,60 +123,83 @@ export default function ConversationActionCard({ task, onTaskUpdate, onRefresh }
   return (
     <div style={{ padding: 16, borderRadius: 14, background: '#fff', border: '1px solid #eef2ff', boxShadow: '0 6px 18px #02061708' }}>
       <div style={{ fontWeight: 900, marginBottom: 10, fontSize: 16 }}>Review Decisions</div>
-      {recs.length ? (
-        <div style={{ color: '#374151', marginBottom: 12 }}>{recs.length} suggested</div>
-      ) : (
-        <div style={{ color: '#6b7280', marginBottom: 12 }}>No review decisions yet. Use the composer below to create one or continue the conversation.</div>
-      )}
+      {/* Summary line: different when viewing a completed task or an active follow-up */}
+      {(() => {
+        if (stage === 'Complete' || (task && task.followUp && task.followUp.active)) {
+          if (followups.length) return <div style={{ color: '#374151', marginBottom: 12 }}>{followups.length} follow-up decision{followups.length > 1 ? 's' : ''} pending</div>
+          if (historyRecs.length) return <div style={{ color: '#374151', marginBottom: 12 }}>{historyRecs.length} recorded</div>
+          return <div style={{ color: '#6b7280', marginBottom: 12 }}>No review decisions yet. Use the composer below to create one or continue the conversation.</div>
+        }
+        return recs.length ? (
+          <div style={{ color: '#374151', marginBottom: 12 }}>{recs.length} suggested</div>
+        ) : (
+          <div style={{ color: '#6b7280', marginBottom: 12 }}>No review decisions yet. Use the composer below to create one or continue the conversation.</div>
+        )
+      })()}
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-        {recs.map((r: any, i: number) => {
-          const rid = (r && (r.id || String(i)))
-          const selected = (() => {
-            // Determine effective selected action id (use local selection if present, otherwise fallback to first recommendation)
-            let currentSelId: any = null
-            try {
-              if (selectedAction) {
-                if (typeof selectedAction === 'string') currentSelId = selectedAction
-                else if (typeof selectedAction === 'object') currentSelId = (selectedAction && selectedAction.id) || null
-              }
-            } catch (e) { currentSelId = null }
-            if (!currentSelId && Array.isArray(recs) && recs.length > 0) {
-              currentSelId = recs[0] && (recs[0].id || String(0))
-            }
-            if (!currentSelId) return false
-            return currentSelId === rid
-          })()
+        {(() => {
+          // For completed tasks and active follow-ups we render history/followups inside the execution section below
+          if (stage === 'Complete' || (task && task.followUp && task.followUp.active)) return null
 
-          return (
-            <div
-              key={rid}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 12,
-                background: selected ? '#eef2ff' : 'transparent',
-                padding: 8,
-                borderRadius: 10,
-                cursor: 'pointer'
-              }}
-              onClick={() => {
-                try {
-                  setSelectedAction(r)
-                  // propagate selection to parent so Dispatch becomes enabled
-                  if (typeof onTaskUpdate === 'function' && task) {
-                    const base = task || {}
-                    const updatedTask = { ...base, selectedAction: r && r.id ? r.id : r, updatedAt: new Date().toISOString() }
-                    onTaskUpdate(updatedTask)
-                  }
-                } catch (e) {}
-              }}
-            >
-              <input aria-label={`select recommendation ${i}`} type="radio" name={`selectedAction-${task && task.taskId || 'task'}`} checked={selected} readOnly />
-              <div style={{ flex: 1, fontWeight: 600 }}>{renderActionLabel(r)}</div>
-            </div>
-          )
-        })}
+          // Non-completed stages: render local recommendations
+          const listToRender = recs
+          if (!Array.isArray(listToRender) || listToRender.length === 0) return null
+
+          return listToRender.map((r: any, i: number) => {
+            const rid = (r && (r.id || String(i)))
+            const selected = (() => {
+              let currentSelId: any = null
+              try {
+                if (selectedAction) {
+                  if (typeof selectedAction === 'string') currentSelId = selectedAction
+                  else if (typeof selectedAction === 'object') currentSelId = (selectedAction && selectedAction.id) || null
+                }
+              } catch (e) { currentSelId = null }
+              if (!currentSelId && Array.isArray(listToRender) && listToRender.length > 0) {
+                currentSelId = listToRender[0] && (listToRender[0].id || String(0))
+              }
+              if (!currentSelId) return false
+              return currentSelId === rid
+            })()
+
+            return (
+              <div
+                key={rid}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 12,
+                  background: selected ? '#eef2ff' : 'transparent',
+                  padding: 8,
+                  borderRadius: 10,
+                  cursor: 'pointer'
+                }}
+                onClick={() => {
+                  try {
+                    setSelectedAction(r)
+                    // propagate selection to parent so Dispatch becomes enabled
+                    if (typeof onTaskUpdate === 'function' && task) {
+                      const base = task || {}
+                      const updatedTask: any = { ...base, selectedAction: r && r.id ? r.id : r, updatedAt: new Date().toISOString() }
+                      // If selecting a follow-up recommendation for a completed task, mark followUp active and status
+                      try {
+                        if (r && r.followup) {
+                          updatedTask.status = 'followup'
+                          updatedTask.followUp = { ...(base.followUp || {}), id: r.id, active: true, createdAt: (base.followUp && base.followUp.createdAt) || new Date().toISOString(), parentExecutionId: (base && (base.executionReport || base.execution || base.execution_report) && ((base.executionReport && (base.executionReport.id || base.executionReport.runId)) || (base.execution && (base.execution.id || base.execution.runId)) || null)) || null }
+                        }
+                      } catch (e) {}
+                      onTaskUpdate(updatedTask)
+                    }
+                  } catch (e) {}
+                }}
+              >
+                <input aria-label={`select recommendation ${i}`} type="radio" name={`selectedAction-${task && task.taskId || 'task'}`} checked={selected} readOnly />
+                <div style={{ flex: 1, fontWeight: 600 }}>{renderActionLabel(r)}</div>
+              </div>
+            )
+          })
+        })()}
       </div>
 
       {/* Collapsed CTA */}
@@ -211,6 +255,22 @@ export default function ConversationActionCard({ task, onTaskUpdate, onRefresh }
         </div>
       )}
 
+      {/* If there is a prior execution available, show it above the action bar (avoid duplicate when we're already in the completed UI) */}
+      {hasPriorExecution && !(['Complete','Reviewed','Evidence'].includes(stage)) ? (
+        <div style={{ marginTop: 14 }}>
+          <div style={{ fontWeight: 800, marginBottom: 8 }}>Completed Execution</div>
+          <div style={{ padding: 8, borderRadius: 10, background: '#f8fafc', border: '1px solid #e6eefc' }}>
+            {priorExecToShow && (priorExecToShow.returnCode || priorExecToShow.return_code || priorExecToShow.exitCode || priorExecToShow.exit_code || priorExecToShow.code || priorExecToShow.statusCode) ? (
+              <div>Return code: <strong>{String(priorExecToShow.returnCode || priorExecToShow.return_code || priorExecToShow.exitCode || priorExecToShow.exit_code || priorExecToShow.code || priorExecToShow.statusCode)}</strong></div>
+            ) : null}
+            {priorExecToShow && (priorExecToShow.stdout || priorExecToShow.output || priorExecToShow.response || priorExecToShow.responsePreview) ? (
+              <div style={{ marginTop: 8 }}><strong>Output</strong><pre style={{ whiteSpace: 'pre-wrap', margin: 0 }}>{String(priorExecToShow.stdout || priorExecToShow.output || priorExecToShow.response || priorExecToShow.responsePreview).slice(0, 2000)}</pre></div>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
+
+
       {/* Action bar: show/hide based on lifecycle stage */}
       {(() => {
         if (stage === 'Conversation') return null
@@ -246,12 +306,20 @@ export default function ConversationActionCard({ task, onTaskUpdate, onRefresh }
               }
             } catch (e) { candidate = null }
 
+            // Detect if this dispatch relates to a follow-up decision
+            const isFollowupCandidate = Boolean((candidate && candidate.followup) || (task && String(task.status).toLowerCase() === 'followup') || (task && task.followUp && task.followUp.active && candidate && task.followUp.id === (candidate && (candidate.id || candidate))))
+
             await dispatchDecision(task, candidate)
 
             // Update task to dispatched on success
             try {
               const base = task || {}
-              const updatedTask = { ...base, status: 'dispatched', dispatched: true, dispatchedAt: new Date().toISOString(), decision: 'approved', updatedAt: new Date().toISOString() }
+              const updatedTask: any = { ...base, status: 'dispatched', dispatched: true, dispatchedAt: new Date().toISOString(), decision: 'approved', updatedAt: new Date().toISOString() }
+              if (isFollowupCandidate) {
+                try {
+                  updatedTask.followUp = { ...(base.followUp || {}), id: (candidate && (candidate.id || candidate)) || ((base.followUp && base.followUp.id) || null), dispatchedAt: new Date().toISOString(), active: true }
+                } catch (e) {}
+              }
               if (typeof onTaskUpdate === 'function') {
                 onTaskUpdate(updatedTask)
               }
@@ -265,7 +333,24 @@ export default function ConversationActionCard({ task, onTaskUpdate, onRefresh }
             try {
               const updated = await pollTaskUntilExecution(task && task.taskId, { intervalMs: 2000, timeoutMs: 60000 })
               if (updated) {
-                if (typeof onTaskUpdate === 'function') onTaskUpdate(updated)
+                try {
+                  // Preserve prior execution report into executionHistory when present
+                  const base = task || {}
+                  const prevExec = base && (base.executionReport || base.execution || base.execution_report) || null
+                  const merged: any = { ...updated }
+                  merged.executionHistory = Array.isArray(updated.executionHistory) ? updated.executionHistory.slice() : []
+                  const baseHistory = Array.isArray(base.executionHistory) ? base.executionHistory.slice() : []
+                  if (prevExec) {
+                    const exists = merged.executionHistory.find((h: any) => (h && ((h.id && prevExec.id && h.id === prevExec.id) || (h.runId && prevExec.runId && h.runId === prevExec.runId) || JSON.stringify(h) === JSON.stringify(prevExec))))
+                    if (!exists) {
+                      merged.executionHistory = merged.executionHistory.concat(baseHistory.filter(Boolean))
+                      merged.executionHistory.push(prevExec)
+                    }
+                  }
+                  if (typeof onTaskUpdate === 'function') onTaskUpdate(merged)
+                } catch (e) {
+                  if (typeof onTaskUpdate === 'function') onTaskUpdate(updated)
+                }
               } else {
                 try { setLocalDispatchError('No execution evidence observed within 60 seconds') } catch (e) {}
               }
@@ -361,12 +446,28 @@ export default function ConversationActionCard({ task, onTaskUpdate, onRefresh }
 
               <div style={{ marginTop: 12 }}>
                 <div style={{ fontWeight: 900, marginBottom: 8 }}>Review Decisions (history)</div>
-                {recs.length ? recs.map((r: any, i: number) => {
+                {historyRecs.length ? historyRecs.map((r: any, i: number) => {
                   const rid = (r && (r.id || String(i)))
                   const selectedId = task && task.selectedAction ? (typeof task.selectedAction === 'string' ? task.selectedAction : (task.selectedAction && task.selectedAction.id)) : null
                   const isSelected = selectedId === rid
                   return (
-                    <div key={rid} style={{ display: 'flex', alignItems: 'center', gap: 12, background: isSelected ? '#eef2ff' : 'transparent', padding: 8, borderRadius: 10 }}>
+                    <div key={rid} style={{ display: 'flex', alignItems: 'center', gap: 12, background: isSelected ? '#eef2ff' : 'transparent', padding: 8, borderRadius: 10, cursor: 'pointer' }} onClick={() => {
+                      try {
+                        setSelectedAction(r)
+                        if (typeof onTaskUpdate === 'function' && task) {
+                          const base = task || {}
+                          const updatedTask: any = { ...base, selectedAction: r && r.id ? r.id : r, updatedAt: new Date().toISOString() }
+                          // If selecting a historical follow-up, mark followUp active and status
+                          try {
+                            if (r && r.followup) {
+                              updatedTask.status = 'followup'
+                              updatedTask.followUp = { ...(base.followUp || {}), id: r.id, active: true, createdAt: (base.followUp && base.followUp.createdAt) || new Date().toISOString(), parentExecutionId: (base && (base.executionReport || base.execution || base.execution_report) && ((base.executionReport && (base.executionReport.id || base.executionReport.runId)) || (base.execution && (base.execution.id || base.execution.runId)) || null)) || null }
+                            }
+                          } catch (e) {}
+                          onTaskUpdate(updatedTask)
+                        }
+                      } catch (e) {}
+                    }}>
                       <input type="radio" aria-label={`review-decision-${i}`} name={`selectedAction-${task && task.taskId || 'task'}`} checked={isSelected} readOnly />
                       <div style={{ flex: 1, fontWeight: 600 }}>{renderActionLabel(r)}</div>
                     </div>
@@ -403,7 +504,7 @@ export default function ConversationActionCard({ task, onTaskUpdate, onRefresh }
                   }
                 } catch (e) { selId = null }
 
-                const updatedTask = {
+                const updatedTask: any = {
                   ...base,
                   status: 'approved',
                   decision: 'approved',
@@ -413,6 +514,14 @@ export default function ConversationActionCard({ task, onTaskUpdate, onRefresh }
                   updatedAt: new Date().toISOString(),
                   lastActivityAt: new Date().toISOString(),
                 }
+
+                // If this approval is for a follow-up, preserve followUp metadata
+                try {
+                  const isFollowupSelected = Boolean((selId && Array.isArray(base.proposedActions) && base.proposedActions.find((a: any) => a.id === selId && a.followup)) || (base && String(base.status).toLowerCase() === 'followup') || (base.followUp && base.followUp.active && base.followUp.id === selId))
+                  if (isFollowupSelected) {
+                    updatedTask.followUp = { ...(base.followUp || {}), id: selId, approvedAt: new Date().toISOString(), active: true }
+                  }
+                } catch (e) {}
 
                 if (typeof onTaskUpdate === 'function') {
                   onTaskUpdate(updatedTask)

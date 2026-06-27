@@ -18,6 +18,13 @@ export function determineStage(task: any): string {
   const exec = task.executionReport || null
   const execStatus = (exec && (exec.status || exec.executionStatus)) ? String(exec.status || exec.executionStatus).toLowerCase() : (task.executionStatus ? String(task.executionStatus).toLowerCase() : '')
 
+  // If a follow-up decision is active for a completed task, treat it as a Decision lifecycle for the follow-up
+  try {
+    if (task && (String(task.status).toLowerCase() === 'followup' || (task.followUp && task.followUp.active))) {
+      return 'Decision'
+    }
+  } catch (e) {}
+
   // 1) Completed
   if (
     task.completed === true ||
