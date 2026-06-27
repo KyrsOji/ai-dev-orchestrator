@@ -303,11 +303,35 @@ export default function ConversationActionCard({ task, onTaskUpdate, onRefresh }
               <button className="big" style={{ flex: 1, background: '#10b981', color: '#fff', border: 'none' }} onClick={() => {
               try {
                 const base = task || {}
-                const updatedTask = { ...base, status: 'approved', decision: 'approved', updatedAt: new Date().toISOString() }
+
+                // Determine an action id to mark as approved (prefer local selection, then task.selectedAction, then first proposed action)
+                let selId: any = null
+                try {
+                  if (selectedAction) {
+                    selId = typeof selectedAction === 'string' ? selectedAction : (selectedAction && (selectedAction.id || selectedAction))
+                  } else if (base.selectedAction) {
+                    selId = typeof base.selectedAction === 'string' ? base.selectedAction : (base.selectedAction && (base.selectedAction.id || base.selectedAction))
+                  } else if (Array.isArray(base.proposedActions) && base.proposedActions.length) {
+                    const first = base.proposedActions[0]
+                    selId = first && (first.id || first)
+                  }
+                } catch (e) { selId = null }
+
+                const updatedTask = {
+                  ...base,
+                  status: 'approved',
+                  decision: 'approved',
+                  approved: true,
+                  approvedAt: new Date().toISOString(),
+                  selectedAction: selId,
+                  updatedAt: new Date().toISOString(),
+                  lastActivityAt: new Date().toISOString(),
+                }
+
                 if (typeof onTaskUpdate === 'function') {
                   onTaskUpdate(updatedTask)
                 } else {
-                  try { if (task) task.status = 'approved' } catch (e) {}
+                  try { if (task) { task.status = 'approved'; task.decision = 'approved' } } catch (e) {}
                 }
               } catch (e) {}
             }}>Approve</button>
