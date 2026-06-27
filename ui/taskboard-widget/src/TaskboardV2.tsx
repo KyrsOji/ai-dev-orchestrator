@@ -297,6 +297,18 @@ export default function TaskboardV2() {
               // ignore history merge errors
             }
           }
+
+          // Merge sessions if present so we don't lose historical sessions when saving
+          try {
+            const existingSessions = Array.isArray(existing.sessions) ? existing.sessions.slice() : []
+            const newSessions = Array.isArray(updatedTask.sessions) ? updatedTask.sessions.slice() : []
+            if (existingSessions.length && newSessions.length) {
+              const merged = existingSessions.concat(newSessions.filter((ns: any) => !existingSessions.some((es: any) => es && es.sessionId === ns.sessionId)))
+              updatedTask = { ...updatedTask, sessions: merged }
+            }
+          } catch (e) {
+            // ignore session merge errors
+          }
         }
       } catch (e) {}
 

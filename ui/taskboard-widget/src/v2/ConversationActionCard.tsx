@@ -2,6 +2,7 @@ import React, { useState } from 'react'
 import { safeText } from '../components/safeText'
 import { determineStage } from './lifecycle'
 import { dispatchDecision, pollTaskUntilExecution, postDecision } from './api'
+import { normalizeTaskSessions, getActiveSession, addMessageToActiveSession, addDecisionToActiveSession, createFollowUpSession, determineSessionStage } from './sessionModel'
 
 export default function ConversationActionCard({ task, onTaskUpdate, onRefresh }: any) {
   const [localDispatchError, setLocalDispatchError] = useState<string | null>(null)
@@ -81,8 +82,6 @@ export default function ConversationActionCard({ task, onTaskUpdate, onRefresh }
       id: 'custom-' + Date.now(),
       description: description,
       payload: { instructions },
-      // mark follow-up when creating from a completed task
-      followup: (stage === 'Complete') ? true : false,
     }
 
     // update local UI state immediately
@@ -92,23 +91,29 @@ export default function ConversationActionCard({ task, onTaskUpdate, onRefresh }
     // Propagate the change to parent task state if callback provided
     try {
       const base = task || {}
-      // Append a user message so the timeline and last activity update
-      const existingMessages = Array.isArray(base.messages) ? base.messages.slice() : []
       const msg = { id: 'msg-' + Date.now(), author: 'user', text: (instructions && instructions.length) ? instructions : (description || ''), createdAt: new Date().toISOString() }
-      existingMessages.push(msg)
 
-      let updatedTask: any = { ...base, messages: existingMessages, proposedActions: [...(Array.isArray(base.proposedActions) ? base.proposedActions : []), newAction], selectedAction: newAction.id, updatedAt: new Date().toISOString(), lastActivityAt: new Date().toISOString() }
-
-      // If this is a follow-up on a completed task, mark follow-up metadata and set followup status
       try {
-        if (stage === 'Complete') {
-          updatedTask.status = 'followup'
-          updatedTask.followUp = { active: true, id: newAction.id, createdAt: new Date().toISOString(), parentExecutionId: (base && (base.executionReport || base.execution || base.execution_report) && ((base.executionReport && (base.executionReport.id || base.executionReport.runId)) || (base.execution && (base.execution.id || base.execution.runId)) || null)) || null }
+        const normalized = normalizeTaskSessions(base)
+        const active = getActiveSession(normalized)
+        const stageLocal = determineSessionStage(active)
+        let updatedTask: any = null
+        if (stageLocal === 'Complete' || (active && active.immutable)) {
+          updatedTask = createFollowUpSession(base, msg, newAction)
+        } else {
+          const withMsg = addMessageToActiveSession(base, msg)
+          updatedTask = addDecisionToActiveSession(withMsg, newAction)
         }
-      } catch (e) {}
 
-      if (typeof onTaskUpdate === 'function') {
-        onTaskUpdate(updatedTask)
+        if (typeof onTaskUpdate === 'function') {
+          onTaskUpdate(updatedTask)
+        }
+      } catch (e) {
+        // fallback to legacy behavior
+        const existingMessages = Array.isArray(base.messages) ? base.messages.slice() : []
+        existingMessages.push(msg)
+        const updatedTask: any = { ...base, messages: existingMessages, proposedActions: [...(Array.isArray(base.proposedActions) ? base.proposedActions : []), newAction], selectedAction: newAction.id, updatedAt: new Date().toISOString(), lastActivityAt: new Date().toISOString() }
+        if (typeof onTaskUpdate === 'function') onTaskUpdate(updatedTask)
       }
     } catch (e) {
       // ignore and keep local-only state

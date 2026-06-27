@@ -314,7 +314,38 @@ app.get('/taskboard/api/tasks', async (req, res) => {
           if (taskId && conversationId) {
             const idx = data.findIndex((t) => t && t.taskId === taskId && (t.conversationId === conversationId || t.conversation_id === conversationId));
             if (idx >= 0) {
-              try { data[idx].executionReport = data[idx].executionReport || report; } catch (e) {}
+              try {
+                const tgt = data[idx]
+                // If sessions[] exists on the stored task, prefer attaching to a matching session or an empty session
+                if (Array.isArray(tgt.sessions) && tgt.sessions.length) {
+                  let attachedToSession = false
+                  // try match by runId or id
+                  const runId = report && (report.runId || report.id || report.run_id)
+                  const parentId = report && (report.parentExecutionId || report.parentExecution_id || report.parentExecution)
+                  for (let s of tgt.sessions) {
+                    try {
+                      if (!s.executionReport && !attachedToSession) {
+                        s.executionReport = report
+                        s.updatedAt = s.updatedAt || updatedAt
+                        attachedToSession = true
+                      } else if (runId && s.executionReport && (s.executionReport.id === runId || s.executionReport.runId === runId)) {
+                        // already matches, do nothing
+                        attachedToSession = true
+                      } else if (parentId && s.executionReport && (s.executionReport.id === parentId || s.executionReport.runId === parentId)) {
+                        attachedToSession = true
+                      }
+                    } catch (e) {}
+                  }
+                  if (!attachedToSession) {
+                    // append as a new immutable session
+                    const newSession = { sessionId: 'sess-' + Date.now().toString(36), createdAt: updatedAt, updatedAt: updatedAt, title: tgt.title || '', messages: [], reviewDecision: { proposals: [] }, selectedActionId: null, approval: null, dispatch: null, executionReport: report, artifacts: [], timeline: [], status: 'Complete', immutable: true }
+                    tgt.sessions.push(newSession)
+                  }
+                } else {
+                  // legacy fallback: attach to top-level executionReport if no sessions present
+                  tgt.executionReport = tgt.executionReport || report
+                }
+              } catch (e) {}
               attached = true;
             }
           }
