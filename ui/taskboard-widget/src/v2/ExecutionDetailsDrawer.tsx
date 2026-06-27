@@ -121,7 +121,7 @@ export default function ExecutionDetailsDrawer({ exec }: { exec: any }) {
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
             <div style={{ color: '#6b7280', width: 140 }}>Run directory</div>
             <div style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, monospace', display: 'flex', gap: 8, alignItems: 'center' }}>
-              <span title={runDir}>{shortenPath(runDir)}</span>
+              <span>{shortenPath(runDir)}</span>
               <button className="small" onClick={() => { try { navigator.clipboard && navigator.clipboard.writeText(runDir) } catch { } }}>Copy</button>
             </div>
           </div>

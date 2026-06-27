@@ -72,3 +72,26 @@ Notes / Next steps (runner investigation):
 
 Recorded-by: OpenHands agent (on behalf of user)
 
+
+
+Date: 2026-06-27 (v3-ux patch)
+
+Summary:
+- Polished ExecutionMonitor UI (phase, runner last update, elapsed duration, stdout/stderr preview, sanitized runDirectory display, polling timeout state, openExecutionDetails hook).
+- Improved panel toggles: clearer labels/tooltips, visual collapsed state; defaults remain collapsed on mobile.
+
+Actions performed:
+- Built UI: `npm run build` (ui/taskboard-widget) - success
+- Ran tests: `npm run test:followups` and `npm run test:render-safe` - all passed
+- Ran Playwright smoke: scripts/smoke_v3_ux_001.js - smoke passed; screenshot: /tmp/playwright_v3_ux_001.png
+
+Files changed:
+- ui/taskboard-widget/src/TaskboardV2.tsx
+- ui/taskboard-widget/src/v2/ExecutionMonitor.tsx
+
+Commit:
+- Branch: taskboard-session-chain
+- Commit: 25fccbed184aa1c8118522853f93700c590207a3 (pushed to origin)
+
+Recorded-by: OpenHands agent (on behalf of user)
+
