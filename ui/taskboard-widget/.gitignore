@@ -7,3 +7,5 @@ dist
 screenshots/
 # Playwright screenshots (write to /tmp in CI)
 playwright-screenshot-*.png
+server.log
+
