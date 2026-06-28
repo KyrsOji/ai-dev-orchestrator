@@ -69,12 +69,15 @@ function childEnv(allowToken = false) {
   }
   return env;
 }
+// Toggle verbose debug logging (set TASKBOARD_DEBUG=true to enable)
+const LOG_DEBUG = (process.env.TASKBOARD_DEBUG || '').toString().toLowerCase() === 'true';
+
 
 
 
 // Trace incoming requests for debugging streaming/fetch behavior
 app.use((req, res, next) => {
-  try { console.log('[REQ-TRACE]', req.method, req.originalUrl || req.url) } catch (e) {}
+  if (LOG_DEBUG) try { console.log('[REQ-TRACE]', req.method, req.originalUrl || req.url) } catch (e) {}
   next()
 })
 
@@ -328,7 +331,7 @@ app.get('/taskboard-v2/*', (req, res) => sendTaskboardV2Index(res));
 // Duplicate API endpoints under /taskboard/api/* so the app can fetch using the built BASE_URL
 app.get('/taskboard/api/tasks', async (req, res) => {
   // Try aggregator HTTP feed first (local read-model service)
-  console.log('[SSE-DEBUG] GET /taskboard/api/tasks invoked');
+  if (LOG_DEBUG) try { console.log('[SSE-DEBUG] GET /taskboard/api/tasks invoked'); } catch (e) {}
 
   const AGG_URL = process.env.AGG_URL || 'http://127.0.0.1:8000/tasks';
   try {
@@ -1069,7 +1072,7 @@ app.get('/taskboard/api/agents', (req, res) => {
 // Expects JSON body containing taskId, decision, policy, selectedAction, editedAction, newAction, notes, source: 'taskboard-standalone', createdAt
 // Requires Authorization: Bearer <TASKBOARD_API_TOKEN>
 app.post('/taskboard/api/task/decision', async (req, res) => {
-    console.log('[SSE-DEBUG] /taskboard/api/task/decision invoked - method:', req.method, 'path:', req.path, 'auth:', !!(req.headers && (req.headers.authorization || req.headers.Authorization)));
+    if (LOG_DEBUG) try { console.log('[SSE-DEBUG] /taskboard/api/task/decision invoked - method:', req.method, 'path:', req.path, 'auth:', !!(req.headers && (req.headers.authorization || req.headers.Authorization))); } catch (e) {}
   try {
     const auth = requireBearerAuth(req, res);
     if (!auth) return;
@@ -1169,7 +1172,7 @@ app.post('/taskboard/api/task/decision', async (req, res) => {
               const proc = spawnSync(producer, args, { input: JSON.stringify(review_msg) + '\n', encoding: 'utf8', timeout: 30000, env: childEnv(false) });
               const meta = { topic, returnCode: proc.status, stdout: (proc.stdout || '').slice(-4000), stderr: (proc.stderr || '').slice(-4000), used_cli: true, cmd: [producer].concat(args) };
               if (proc.status === 0) {
-                console.log('[SSE-DEBUG] async publish ok', meta);
+                if (LOG_DEBUG) try { console.log('[SSE-DEBUG] async publish ok', meta); } catch (e) {}
               } else {
                 console.error('Producer CLI failed', meta);
               }
@@ -1191,7 +1194,7 @@ app.post('/taskboard/api/task/decision', async (req, res) => {
           try { parsed = JSON.parse(out || '{}'); } catch (e) { parsed = null; }
           const meta = { topic, returnCode: py.status, stdout: out.slice(-4000), stderr: (py.stderr || '').slice(-4000), used_python_wrapper: true, parsed: parsed };
           if (py.status === 0) {
-            console.log('[SSE-DEBUG] async python publish ok', meta);
+            if (LOG_DEBUG) try { console.log('[SSE-DEBUG] async python publish ok', meta); } catch (e) {}
           } else {
             console.error('Python kafka wrapper failed', meta);
           }
@@ -1264,8 +1267,37 @@ let sseHeartbeatIntervalMs = 30000;
 
 function sendSseEvent(resObj, eventName, payload) {
   try {
-    resObj.write(`event: ${eventName}\n`);
-    resObj.write(`data: ${JSON.stringify(payload)}\n\n`);
+    // Normalize payload so the client-side handler can reliably detect the event.
+    // Strategy:
+    // - If payload is an object that already contains a key matching eventName (e.g., { task: ... } for 'task'),
+    //   keep it as-is and just annotate with the event name.
+    // - Otherwise, add a top-level property keyed by the eventName, and include a 'payload' field for convenience.
+    let out = null;
+    try {
+      if (payload && typeof payload === 'object' && !Array.isArray(payload)) {
+        // shallow copy to avoid mutating original
+        out = Object.assign({}, payload);
+        if (!Object.prototype.hasOwnProperty.call(out, eventName)) {
+          out[eventName] = payload;
+          out.payload = payload;
+        }
+        out.event = eventName;
+      } else {
+        out = { event: eventName };
+        out[eventName] = payload;
+        out.payload = payload;
+      }
+    } catch (e) {
+      out = { event: eventName, payload: payload, value: payload };
+    }
+
+    // Only write a named 'event:' header for event types the client explicitly registers for.
+    // The client registers named listeners for: task, agents, runner, log
+    const NAMED_EVENTS = new Set(['task','agents','runner','log']);
+    if (NAMED_EVENTS.has(eventName)) {
+      resObj.write(`event: ${eventName}\n`);
+    }
+    resObj.write(`data: ${JSON.stringify(out)}\n\n`);
   } catch (e) {
     // ignore write errors (client likely disconnected)
   }

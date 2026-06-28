@@ -31,7 +31,7 @@ async function run() {
   console.log('Starting server on port', port);
 
   const SERVER_TOKEN = 'test-token-abc-123';
-  const server = spawn('node', ['server.js'], { cwd: path.join(__dirname, '..'), env: Object.assign({}, process.env, { PORT: String(port), TASKBOARD_API_TOKEN: SERVER_TOKEN }), stdio: ['ignore', 'pipe', 'pipe'] });
+  const server = spawn('node', ['server.js'], { cwd: path.join(__dirname, '..'), env: Object.assign({}, process.env, { PORT: String(port), TASKBOARD_API_TOKEN: SERVER_TOKEN, TASKBOARD_USE_FIXTURES: 'true', AGG_URL: 'http://127.0.0.1:9999/tasks' }), stdio: ['ignore', 'pipe', 'pipe'] });
   server.stdout.on('data', (d) => process.stdout.write(`[server stdout] ${d}`));
   server.stderr.on('data', (d) => process.stderr.write(`[server stderr] ${d}`));
 
@@ -110,7 +110,7 @@ async function run() {
         window.__TEST_ES = {
           emit: (obj) => { try { window.__TEST_ES_INSTANCE && window.__TEST_ES_INSTANCE._emit(obj); } catch (e) {} }
         };
-        try { window.__TASKBOARD_API_TOKEN = token; localStorage.setItem('taskboard_standalone_token', token); } catch (e) {}
+        try { window.__TASKBOARD_API_TOKEN = token; localStorage.setItem('taskboard_standalone_token', token); window.__TASKBOARD_DEBUG = true; } catch (e) {}
       })();
     }, SERVER_TOKEN);
 
