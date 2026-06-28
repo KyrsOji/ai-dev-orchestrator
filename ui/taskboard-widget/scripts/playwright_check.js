@@ -7,7 +7,7 @@ const { chromium } = require('playwright');
     { name: 'mobile', width: 375, height: 812 }
   ];
 
-  const url = 'http://localhost:3000/taskboard-v2';
+  const url = process.env.TB_BASE || 'http://127.0.0.1:3000/taskboard-v2';
 
   for (const vp of viewports) {
     const browser = await chromium.launch();
@@ -61,34 +61,61 @@ const { chromium } = require('playwright');
     });
 
     const page = await context.newPage();
+    let viewportOk = true;
+    let details = {};
     try {
-      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 10000 });
+      await page.goto(url, { waitUntil: 'networkidle', timeout: 20000 });
 
-      // wait for SSE open (EventSource) or timeout
+      // Wait for execution monitor text to appear
+      const execVisible = await page.locator('text=Execution').first().waitFor({ timeout: 10000 }).then(() => true).catch(() => false);
+
+      // wait for SSE open (EventSource or WebSocket) or timeout
       try {
-        await page.waitForFunction(() => window.__sse_opened && window.__sse_opened.length > 0, { timeout: 5000 });
+        await page.waitForFunction(() => (window.__sse_opened && window.__sse_opened.length > 0), { timeout: 5000 });
       } catch (e) {
         // no SSE opened within timeout
       }
 
       const sseOpened = await page.evaluate(() => Array.isArray(window.__sse_opened) && window.__sse_opened.length > 0);
-      const foundLiveText = await page.evaluate(() => (document && document.body && document.body.innerText || '').toLowerCase().includes('live'));
 
-      // collect fetch calls after SSE open
+      // collect fetch calls and check for any after SSE open
       const fetchCalls = await page.evaluate(() => (window.__fetch_calls || []).slice());
       const sseTs = await page.evaluate(() => (window.__sse_opened && window.__sse_opened[0] && window.__sse_opened[0].t) || null);
-      const callsAfter = (fetchCalls || []).filter(c => !sseTs || c.t > sseTs + 10);
+      // allow very small scheduling skew (50ms)
+      const callsAfter = (fetchCalls || []).filter(c => !sseTs || c.t > (sseTs + 50));
 
-      // screenshot
-      const screenshotPath = `./playwright-screenshot-${vp.name}.png`;
+      // screenshot into /tmp
+      const screenshotPath = `/tmp/playwright-screenshot-${vp.name}.png`;
       await page.screenshot({ path: screenshotPath, fullPage: true });
 
-      console.log(JSON.stringify({ viewport: vp.name, sseOpened, foundLiveText, fetchCallsCount: fetchCalls.length, fetchAfterSse: callsAfter.length, screenshot: screenshotPath }));
+      details = { viewport: vp.name, sseOpened, execVisible, fetchCallsCount: fetchCalls.length, fetchAfterSse: callsAfter.length, screenshot: screenshotPath };
+
+      // Assert conditions: SSE opened, no polling after SSE, execution monitor visible
+      if (!sseOpened) {
+        console.error('SSE did not open for viewport', vp.name);
+        viewportOk = false;
+      }
+      if (!execVisible) {
+        console.error('Execution monitor not visible for viewport', vp.name);
+        viewportOk = false;
+      }
+      if (callsAfter.length > 0) {
+        console.error('Detected fetch calls after SSE opened for viewport', vp.name, 'count:', callsAfter.length);
+        viewportOk = false;
+      }
+
+      console.log(JSON.stringify(details));
     } catch (err) {
       console.error('error', err && err.message ? err.message : err);
+      viewportOk = false;
     } finally {
       await context.close();
       await browser.close();
+    }
+
+    if (!viewportOk) {
+      console.error('Viewport checks failed for', vp.name);
+      process.exitCode = 2;
     }
   }
 

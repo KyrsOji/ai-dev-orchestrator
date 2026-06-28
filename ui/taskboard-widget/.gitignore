@@ -5,3 +5,5 @@ dist
 .DS_Store
 # Local test artifacts
 screenshots/
+# Playwright screenshots (write to /tmp in CI)
+playwright-screenshot-*.png
