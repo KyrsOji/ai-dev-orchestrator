@@ -251,6 +251,8 @@ app.get('/taskboard-v2/*', (req, res) => sendTaskboardV2Index(res));
 // Duplicate API endpoints under /taskboard/api/* so the app can fetch using the built BASE_URL
 app.get('/taskboard/api/tasks', async (req, res) => {
   // Try aggregator HTTP feed first (local read-model service)
+  console.log('[SSE-DEBUG] GET /taskboard/api/tasks invoked');
+
   const AGG_URL = process.env.AGG_URL || 'http://127.0.0.1:8000/tasks';
   try {
     const { URL } = require('url');
@@ -1008,6 +1010,7 @@ app.get('/taskboard/api/agents', (req, res) => {
 // Expects JSON body containing taskId, decision, policy, selectedAction, editedAction, newAction, notes, source: 'taskboard-standalone', createdAt
 // Requires Authorization: Bearer <TASKBOARD_API_TOKEN>
 app.post('/taskboard/api/task/decision', async (req, res) => {
+    console.log('[SSE-DEBUG] /taskboard/api/task/decision invoked - method:', req.method, 'path:', req.path, 'auth:', !!(req.headers && (req.headers.authorization || req.headers.Authorization)));
   try {
     const serverToken = process.env.TASKBOARD_API_TOKEN;
     if (!serverToken) {
@@ -1080,71 +1083,80 @@ app.post('/taskboard/api/task/decision', async (req, res) => {
     const topic = 'ai.dev.review.out';
     const clientConfig = process.env.KAFKA_CLIENT_CONFIG;
 
-    // Helper to find CLI in PATH if not explicitly provided
-    const producerEnv = process.env.KAFKA_PRODUCER_CMD;
-    function which(cmd) {
+    // Publish asynchronously in the background so the UI receives a quick response
+    setImmediate(() => {
       try {
-        const out = spawnSync('which', [cmd], { encoding: 'utf8' });
-        if (out && out.status === 0) return out.stdout.trim();
-      } catch (e) {}
-      return null;
-    }
+        // Helper to find CLI in PATH if not explicitly provided
+        const producerEnv = process.env.KAFKA_PRODUCER_CMD;
+        function which(cmd) {
+          try {
+            const out = spawnSync('which', [cmd], { encoding: 'utf8' });
+            if (out && out.status === 0) return out.stdout.trim();
+          } catch (e) {}
+          return null;
+        }
 
-    let producer = null;
-    if (producerEnv) {
-      try {
-        // Do not honor obvious no-op simulation producer (/bin/true). Prefer a real kafka-console-producer if available.
-        if (fs.existsSync(producerEnv) && path.basename(producerEnv) !== 'true' && producerEnv !== '/bin/true') producer = producerEnv;
-      } catch (e) { /* ignore */ }
-    }
-    if (!producer) {
-      producer = which('kafka-console-producer.sh') || which('kafka-console-producer');
-    }
+        let producer = null;
+        if (producerEnv) {
+          try {
+            // Do not honor obvious no-op simulation producer (/bin/true). Prefer a real kafka-console-producer if available.
+            if (fs.existsSync(producerEnv) && path.basename(producerEnv) !== 'true' && producerEnv !== '/bin/true') producer = producerEnv;
+          } catch (e) { /* ignore */ }
+        }
+        if (!producer) {
+          producer = which('kafka-console-producer.sh') || which('kafka-console-producer');
+        }
 
-    // Try CLI producer first (so KAFKA_CLIENT_CONFIG can be honored)
-    if (producer) {
-      // Skip known harmless no-op binaries (e.g., /bin/true) to avoid false-positive success responses
-      const prodBase = path.basename(producer || '');
-      if (prodBase === 'true' || producer === '/bin/true') {
-        console.warn('Producer CLI configured as no-op (true) - skipping CLI publish to avoid false-positive success. Falling back to Python kafka wrapper.');
-      } else {
-        const args = ['--bootstrap-server', process.env.KAFKA_BOOTSTRAP || 'localhost:9092', '--topic', topic];
-        if (clientConfig) args.push('--producer.config', clientConfig);
-        try {
-          const proc = spawnSync(producer, args, { input: JSON.stringify(review_msg) + '\n', encoding: 'utf8', timeout: 30000, env: process.env });
-          const meta = { topic, returnCode: proc.status, stdout: (proc.stdout || '').slice(-4000), stderr: (proc.stderr || '').slice(-4000), used_cli: true, cmd: [producer].concat(args) };
-          if (proc.status === 0) {
-            return res.json({ ok: true, published: true, meta });
+        // Try CLI producer first (so KAFKA_CLIENT_CONFIG can be honored)
+        if (producer) {
+          // Skip known harmless no-op binaries (e.g., /bin/true) to avoid false-positive success responses
+          const prodBase = path.basename(producer || '');
+          if (prodBase === 'true' || producer === '/bin/true') {
+            console.warn('Producer CLI configured as no-op (true) - skipping CLI publish to avoid false-positive success. Falling back to Python kafka wrapper.');
           } else {
-            console.error('Producer CLI failed', meta);
+            const args = ['--bootstrap-server', process.env.KAFKA_BOOTSTRAP || 'localhost:9092', '--topic', topic];
+            if (clientConfig) args.push('--producer.config', clientConfig);
+            try {
+              const proc = spawnSync(producer, args, { input: JSON.stringify(review_msg) + '\n', encoding: 'utf8', timeout: 30000, env: process.env });
+              const meta = { topic, returnCode: proc.status, stdout: (proc.stdout || '').slice(-4000), stderr: (proc.stderr || '').slice(-4000), used_cli: true, cmd: [producer].concat(args) };
+              if (proc.status === 0) {
+                console.log('[SSE-DEBUG] async publish ok', meta);
+              } else {
+                console.error('Producer CLI failed', meta);
+              }
+            } catch (e) {
+              console.error('Producer CLI exception', e && e.message ? e.message : e);
+            }
+          }
+        }
+
+        // Fallback: attempt to use Python matrix_bridge.kafka_client (respects KAFKA_CLIENT_CONFIG)
+        try {
+          const pythonCode = `import json, sys\nfrom matrix_bridge.kafka_client import KafkaClient\nkc = KafkaClient(dry_run=False)\nmsg = json.loads(sys.stdin.read())\nsuccess, meta = kc.publish('${topic}', msg)\nprint(json.dumps({'success': success, 'meta': meta}))\nif not success:\n    sys.exit(2)\n`;
+          const env = Object.assign({}, process.env);
+          // Ensure Python can import matrix_bridge from repo root
+          env.PYTHONPATH = path.resolve(__dirname, '..', '..');
+          const py = spawnSync('python3', ['-c', pythonCode], { input: JSON.stringify(review_msg), encoding: 'utf8', env: env, timeout: 30000 });
+          const out = (py.stdout || '').trim();
+          let parsed = null;
+          try { parsed = JSON.parse(out || '{}'); } catch (e) { parsed = null; }
+          const meta = { topic, returnCode: py.status, stdout: out.slice(-4000), stderr: (py.stderr || '').slice(-4000), used_python_wrapper: true, parsed: parsed };
+          if (py.status === 0) {
+            console.log('[SSE-DEBUG] async python publish ok', meta);
+          } else {
+            console.error('Python kafka wrapper failed', meta);
           }
         } catch (e) {
-          console.error('Producer CLI exception', e && e.message ? e.message : e);
+          console.error('Python kafka fallback exception', e && e.message ? e.message : e);
         }
+      } catch (e) {
+        console.error('Async publish error', e && e.message ? e.message : e);
       }
-    }
+    });
 
-    // Fallback: attempt to use Python matrix_bridge.kafka_client (respects KAFKA_CLIENT_CONFIG)
-    try {
-      const pythonCode = `import json, sys\nfrom matrix_bridge.kafka_client import KafkaClient\nkc = KafkaClient(dry_run=False)\nmsg = json.loads(sys.stdin.read())\nsuccess, meta = kc.publish('${topic}', msg)\nprint(json.dumps({'success': success, 'meta': meta}))\nif not success:\n    sys.exit(2)\n`;
-      const env = Object.assign({}, process.env);
-      // Ensure Python can import matrix_bridge from repo root
-      env.PYTHONPATH = path.resolve(__dirname, '..', '..');
-      const py = spawnSync('python3', ['-c', pythonCode], { input: JSON.stringify(review_msg), encoding: 'utf8', env: env, timeout: 30000 });
-      const out = (py.stdout || '').trim();
-      let parsed = null;
-      try { parsed = JSON.parse(out || '{}'); } catch (e) { parsed = null; }
-      const meta = { topic, returnCode: py.status, stdout: out.slice(-4000), stderr: (py.stderr || '').slice(-4000), used_python_wrapper: true, parsed: parsed };
-      if (py.status === 0) {
-        return res.json({ ok: true, published: true, meta });
-      } else {
-        console.error('Python kafka wrapper failed', meta);
-        return res.status(502).json({ ok: false, error: 'Failed to publish to Kafka', meta });
-      }
-    } catch (e) {
-      console.error('Python kafka fallback exception', e && e.message ? e.message : e);
-      return res.status(502).json({ ok: false, error: 'Failed to publish to Kafka', detail: e && e.message ? e.message : String(e) });
-    }
+    // Respond quickly to client by redirecting to the current tasks endpoint so clients will perform a GET
+    // This helps the UI perform an immediate one-shot refresh after a standalone decision without blocking.
+    return res.redirect(303, '/taskboard/api/tasks');
   } catch (e) {
     console.error('task decision handler error', e && e.message ? e.message : e);
     return res.status(500).json({ ok: false, error: 'internal server error' });
@@ -1190,6 +1202,225 @@ app.get('/taskboard-v2/*', (req, res, next) => {
   if (req.path.startsWith('/taskboard/api/')) return next();
   res.sendFile(path.join(distPath, 'index.html'));
 });
+
+// --- Server-Sent Events (SSE) for live taskboard updates
+// Provides: /taskboard/api/stream
+// Publishes events: tasks, task, followups, agents, runner, log, heartbeat
+
+const sseClients = new Map();
+let sseNextClientId = 1;
+let ssePoller = null;
+let sseHeartbeat = null;
+let ssePollingIntervalMs = 1000;
+let sseHeartbeatIntervalMs = 30000;
+
+function sendSseEvent(resObj, eventName, payload) {
+  try {
+    resObj.write(`event: ${eventName}\n`);
+    resObj.write(`data: ${JSON.stringify(payload)}\n\n`);
+  } catch (e) {
+    // ignore write errors (client likely disconnected)
+  }
+}
+
+function broadcastEvent(eventName, payload, opts) {
+  opts = opts || {};
+  for (const [id, client] of sseClients.entries()) {
+    try {
+      // If the client requested a specific taskId, skip unrelated events
+      if (opts.taskId && client.taskId && String(client.taskId) !== String(opts.taskId)) continue;
+      // For task-scoped events that include a taskId in opts, if client.taskId is set it must match
+      if (client.taskId && opts.taskId && String(client.taskId) !== String(opts.taskId)) continue;
+      sendSseEvent(client.res, eventName, payload);
+    } catch (e) {}
+  }
+}
+
+function httpGetJson(path, timeoutMs = 1500) {
+  return new Promise((resolve) => {
+    try {
+      const url = `http://127.0.0.1:${port}${path}`;
+      const lib = require('http');
+      const req = lib.get(url, (resp) => {
+        let data = '';
+        resp.on('data', (chunk) => (data += chunk));
+        resp.on('end', () => {
+          try { resolve({ ok: true, json: JSON.parse(data) }); } catch (e) { resolve({ ok: false }); }
+        });
+      });
+      req.on('error', () => resolve({ ok: false }));
+      req.setTimeout(timeoutMs, () => { try { req.abort(); } catch (e) {} resolve({ ok: false }); });
+    } catch (e) { resolve({ ok: false }); }
+  });
+}
+
+let prevTasksById = {};
+let prevTaskIdsSet = new Set();
+let prevFollowups = null;
+let prevAgents = null;
+let prevRunner = null;
+let isPolling = false;
+
+async function ssePoll() {
+  if (isPolling) return;
+  isPolling = true;
+  try {
+    const tasksRes = await httpGetJson('/taskboard/api/tasks');
+    const followupsRes = await httpGetJson('/taskboard/api/followups');
+    const agentsRes = await httpGetJson('/taskboard/api/agents');
+    const runnerRes = await httpGetJson('/taskboard/api/runner-status');
+
+    const tasks = (tasksRes && tasksRes.ok && Array.isArray(tasksRes.json)) ? tasksRes.json : [];
+    const followups = (followupsRes && followupsRes.ok && Array.isArray(followupsRes.json)) ? followupsRes.json : (followupsRes && followupsRes.ok && followupsRes.json) || [];
+    const agents = (agentsRes && agentsRes.ok && agentsRes.json) ? agentsRes.json : null;
+    const runner = (runnerRes && runnerRes.ok && runnerRes.json) ? runnerRes.json : null;
+
+    // If task count changed, emit full tasks list
+    const newTaskIds = new Set((tasks || []).map(t => t && (t.taskId || t.id || t.task_id)));
+    if (newTaskIds.size !== prevTaskIdsSet.size) {
+      broadcastEvent('tasks', tasks);
+    }
+
+    // Per-task changes and log diffs
+    for (const t of (tasks || [])) {
+      const tid = String((t && (t.taskId || t.id || t.task_id)) || '');
+      if (!tid) continue;
+      const curJson = JSON.stringify(t);
+      const prevJson = prevTasksById[tid];
+      if (!prevJson) {
+        // new task
+        broadcastEvent('task', { task: t }, { taskId: tid });
+      } else if (prevJson !== curJson) {
+        // task updated
+        broadcastEvent('task', { task: t }, { taskId: tid });
+
+        // detect log diffs (stdout/stderr) and emit 'log' events with the appended chunk
+        try {
+          const prevObj = JSON.parse(prevJson);
+          const prevExec = prevObj.executionReport || prevObj.execution || prevObj.execution_report || {};
+          const newExec = t.executionReport || t.execution || t.execution_report || {};
+
+          const prevOut = String(prevExec.stdout || prevExec.output || prevExec.response || '');
+          const newOut = String(newExec.stdout || newExec.output || newExec.response || '');
+          if (newOut.length > prevOut.length) {
+            const chunk = newOut.slice(prevOut.length);
+            broadcastEvent('log', { taskId: tid, stream: 'stdout', data: chunk }, { taskId: tid });
+          }
+
+          const prevErr = String(prevExec.stderr || prevExec.errorOutput || prevExec.error || '');
+          const newErr = String(newExec.stderr || newExec.errorOutput || newExec.error || '');
+          if (newErr.length > prevErr.length) {
+            const chunk = newErr.slice(prevErr.length);
+            broadcastEvent('log', { taskId: tid, stream: 'stderr', data: chunk }, { taskId: tid });
+          }
+        } catch (e) {
+          // ignore parse errors
+        }
+      }
+      prevTasksById[tid] = curJson;
+    }
+
+    prevTaskIdsSet = newTaskIds;
+
+    // Followups
+    try {
+      const fJson = JSON.stringify(followups || []);
+      if (fJson !== prevFollowups) {
+        broadcastEvent('followups', followups);
+        prevFollowups = fJson;
+      }
+    } catch (e) {}
+
+    // Agents
+    try {
+      const aJson = JSON.stringify(agents || {});
+      if (aJson !== prevAgents) {
+        broadcastEvent('agents', agents);
+        prevAgents = aJson;
+      }
+    } catch (e) {}
+
+    // Runner
+    try {
+      const rJson = JSON.stringify(runner || {});
+      if (rJson !== prevRunner) {
+        broadcastEvent('runner', runner);
+        prevRunner = rJson;
+      }
+    } catch (e) {}
+
+  } catch (e) {
+    // swallow polling errors
+  } finally {
+    isPolling = false;
+  }
+}
+
+function startSsePoller() {
+  if (ssePoller) return;
+  // poll immediately and then on interval
+  ssePoller = setInterval(ssePoll, ssePollingIntervalMs);
+  sseHeartbeat = setInterval(() => {
+    broadcastEvent('heartbeat', { ts: new Date().toISOString() });
+  }, sseHeartbeatIntervalMs);
+  // fire initial poll
+  ssePoll();
+}
+
+function stopSsePollerIfIdle() {
+  if (sseClients.size === 0) {
+    if (ssePoller) { clearInterval(ssePoller); ssePoller = null; }
+    if (sseHeartbeat) { clearInterval(sseHeartbeat); sseHeartbeat = null; }
+    prevTasksById = {};
+    prevTaskIdsSet = new Set();
+    prevFollowups = null;
+    prevAgents = null;
+    prevRunner = null;
+  }
+}
+
+app.get('/taskboard/api/stream', (req, res) => {
+  // SSE connection
+  res.set({
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    Connection: 'keep-alive',
+    'X-Accel-Buffering': 'no'
+  });
+  try { res.flushHeaders && res.flushHeaders(); } catch (e) {}
+
+  const clientId = String(sseNextClientId++);
+  const taskId = req.query && req.query.taskId ? String(req.query.taskId) : null;
+  sseClients.set(clientId, { res, taskId });
+
+  // send a short comment to establish the connection
+  try { res.write(': connected\n\n'); } catch (e) {}
+
+  // send initial snapshots for this client
+  (async () => {
+    try {
+      const tasksRes = await httpGetJson('/taskboard/api/tasks');
+      if (tasksRes && tasksRes.ok) sendSseEvent(res, 'tasks', tasksRes.json);
+      const followupsRes = await httpGetJson('/taskboard/api/followups');
+      if (followupsRes && followupsRes.ok) sendSseEvent(res, 'followups', followupsRes.json);
+      const agentsRes = await httpGetJson('/taskboard/api/agents');
+      if (agentsRes && agentsRes.ok) sendSseEvent(res, 'agents', agentsRes.json);
+      const runnerRes = await httpGetJson('/taskboard/api/runner-status');
+      if (runnerRes && runnerRes.ok) sendSseEvent(res, 'runner', runnerRes.json);
+    } catch (e) {}
+  })();
+
+  // start global poller when first client connects
+  startSsePoller();
+
+  req.on('close', () => {
+    try { sseClients.delete(clientId); } catch (e) {}
+    stopSsePollerIfIdle();
+  });
+});
+
+// --- End SSE implementation
+
 
 app.listen(port, () => {
   console.log('Server listening on port', port);

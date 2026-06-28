@@ -5,13 +5,10 @@ import ExecutionTimeline from './v2/ExecutionTimeline'
 import ExecutionMonitor from './v2/ExecutionMonitor'
 
 import OperationsPanel from './v2/OperationsPanel'
-import { fetchTasks, fetchFollowups, fetchRunnerStatus, fetchAgents } from './v2/api'
+import useTaskboardLive from './v2/useTaskboardLive'
 
 export default function TaskboardV2() {
-  const [tasks, setTasks] = useState<any[]>([])
-  const [followups, setFollowups] = useState<any[]>([])
-  const [runnerStatus, setRunnerStatus] = useState<any>(null)
-  const [agents, setAgents] = useState<any[]>([])
+  const { tasks, setTasks, followups, setFollowups, agents, setAgents, runnerStatus, setRunnerStatus, isPolling, streamConnected, doRefresh } = useTaskboardLive()
   const [selectedId, setSelectedId] = useState<string | null>(null)
 
   // Drawer state and mobile detection. Persist collapsed state in localStorage.
@@ -88,29 +85,6 @@ export default function TaskboardV2() {
     return () => { try { document.body.style.overflow = '' } catch (e) {} }
   }, [leftCollapsed, rightCollapsed, isMobile])
 
-  useEffect(() => {
-    async function load() {
-      try {
-        const t = await fetchTasks()
-        setTasks(Array.isArray(t) ? t : [])
-      } catch (e) { console.error('load tasks error', e) }
-      try {
-        const f = await fetchFollowups()
-        setFollowups(Array.isArray(f) ? f : [])
-      } catch (e) { console.error('load followups error', e) }
-      try {
-        const r = await fetchRunnerStatus()
-        setRunnerStatus(r)
-      } catch (e) { /* ignore */ }
-      try {
-        const a = await fetchAgents()
-        setAgents(Array.isArray(a) ? a : [])
-      } catch (e) { /* ignore */ }
-    }
-    load()
-    const id = setInterval(load, 10000)
-    return () => clearInterval(id)
-  }, [])
 
   const selectedTask = tasks.find((t) => t.taskId === selectedId) || (tasks.length ? tasks[0] : null)
   // key for forcing ConversationPanel remount when selected task changes significantly (updatedAt)
@@ -637,8 +611,7 @@ export default function TaskboardV2() {
         <div style={{ flex: 1 }}>
           <ConversationPanel key={selectedKey} task={selectedTask} followups={followups} onTaskUpdate={handleTaskUpdate} onRefresh={async () => {
             try {
-              const t = await fetchTasks()
-              setTasks(Array.isArray(t) ? t : [])
+              await doRefresh()
             } catch (e) { console.error('refresh tasks error', e) }
           }} />
         </div>
