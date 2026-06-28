@@ -30,7 +30,19 @@ async function run() {
   const base = `http://127.0.0.1:${port}`;
   console.log('Starting server on port', port);
 
-  const SERVER_TOKEN = 'test-token-abc-123';
+  const SERVER_TOKEN = process.env.TEST_SERVER_TOKEN || process.env.TASKBOARD_API_TOKEN || `test-token-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+
+  function maskToken(tok) {
+    if (!tok) return 'missing';
+    try {
+      const len = tok.length || 0;
+      const preview = tok.length <= 6 ? '*'.repeat(tok.length) : `${tok.slice(0,3)}...${tok.slice(-3)}`;
+      return `present (len=${len}, preview=${preview})`;
+    } catch (e) { return 'present (masked)'}
+  }
+
+  console.log('Using server token:', maskToken(SERVER_TOKEN));
+
   const server = spawn('node', ['server.js'], { cwd: path.join(__dirname, '..'), env: Object.assign({}, process.env, { PORT: String(port), TASKBOARD_API_TOKEN: SERVER_TOKEN, TASKBOARD_USE_FIXTURES: 'true', AGG_URL: 'http://127.0.0.1:9999/tasks' }), stdio: ['ignore', 'pipe', 'pipe'] });
   server.stdout.on('data', (d) => process.stdout.write(`[server stdout] ${d}`));
   server.stderr.on('data', (d) => process.stderr.write(`[server stderr] ${d}`));
