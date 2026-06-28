@@ -10,9 +10,12 @@ The aggregator runs in-process (background thread) when possible.
 """
 
 import os
+import time
+import json
 import threading
 import logging
-from flask import Flask, jsonify, abort
+import queue
+from flask import Flask, jsonify, abort, Response, stream_with_context, request
 
 # Import aggregator
 try:
@@ -79,6 +82,163 @@ def get_task(task_id):
 @app.route('/health')
 def health():
     return 'ok'
+
+
+# --- Server-Sent Events (SSE) implementation for live updates
+# Publishes events: tasks, task, log, heartbeat
+
+sse_clients = {}
+sse_clients_lock = threading.Lock()
+sse_next_client_id = 1
+
+prev_tasks_by_id = {}
+prev_task_ids_set = set()
+
+def _format_sse(event, payload):
+    try:
+        data = json.dumps(payload, default=str)
+    except Exception:
+        data = json.dumps(str(payload))
+    if event:
+        return f"event: {event}\n" + f"data: {data}\n\n"
+    return f"data: {data}\n\n"
+
+
+def broadcast_event(event, payload, taskId=None):
+    with sse_clients_lock:
+        for cid, client in list(sse_clients.items()):
+            try:
+                if taskId and client.get('taskId') and str(client.get('taskId')) != str(taskId):
+                    continue
+                q = client.get('queue')
+                if q:
+                    try:
+                        q.put_nowait(_format_sse(event, payload))
+                    except Exception:
+                        # queue full or closed
+                        pass
+            except Exception:
+                # ignore per-client errors
+                pass
+
+
+def sse_poller():
+    global prev_tasks_by_id, prev_task_ids_set
+    heartbeat_counter = 0
+    while True:
+        try:
+            tasks = agg.get_all_tasks() or []
+            tasks_by_id = {}
+            new_ids = set()
+            for t in tasks:
+                tid = t.get('taskId') or t.get('id') or t.get('task_id')
+                if not tid:
+                    continue
+                tasks_by_id[str(tid)] = t
+                new_ids.add(str(tid))
+
+            # emit full tasks feed if count changed
+            if len(new_ids) != len(prev_task_ids_set):
+                broadcast_event('tasks', tasks)
+
+            # per-task diffs
+            for tid, t in tasks_by_id.items():
+                try:
+                    cur = json.dumps(t, default=str)
+                    prev = prev_tasks_by_id.get(tid)
+                    if prev is None:
+                        broadcast_event('task', {'task': t}, taskId=tid)
+                    elif prev != cur:
+                        broadcast_event('task', {'task': t}, taskId=tid)
+
+                        # detect appended stdout/stderr
+                        try:
+                            prevObj = json.loads(prev)
+                            prevExec = prevObj.get('executionReport') or prevObj.get('execution') or prevObj.get('execution_report') or {}
+                            newExec = t.get('executionReport') or t.get('execution') or t.get('execution_report') or {}
+
+                            prev_out = str(prevExec.get('stdout') or '')
+                            new_out = str(newExec.get('stdout') or '')
+                            if len(new_out) > len(prev_out):
+                                chunk = new_out[len(prev_out):]
+                                broadcast_event('log', {'taskId': tid, 'stream': 'stdout', 'data': chunk}, taskId=tid)
+
+                            prev_err = str(prevExec.get('stderr') or '')
+                            new_err = str(newExec.get('stderr') or '')
+                            if len(new_err) > len(prev_err):
+                                chunk = new_err[len(prev_err):]
+                                broadcast_event('log', {'taskId': tid, 'stream': 'stderr', 'data': chunk}, taskId=tid)
+                        except Exception:
+                            pass
+
+                    prev_tasks_by_id[tid] = cur
+                except Exception:
+                    # tolerate per-task errors
+                    pass
+
+            prev_task_ids_set = new_ids
+
+            # heartbeat every 30s
+            heartbeat_counter = (heartbeat_counter + 1) % 30
+            if heartbeat_counter == 0:
+                broadcast_event('heartbeat', {'ts': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())})
+
+        except Exception:
+            logging.exception('SSE poller error')
+        finally:
+            time.sleep(1)
+
+
+# start poller thread
+try:
+    t = threading.Thread(target=sse_poller, daemon=True)
+    t.start()
+except Exception:
+    logging.exception('Failed to start SSE poller thread')
+
+
+@app.route('/stream')
+def stream():
+    global sse_next_client_id
+    q = queue.Queue(maxsize=1000)
+    client_id = None
+    try:
+        with sse_clients_lock:
+            client_id = str(sse_next_client_id)
+            sse_next_client_id += 1
+            sse_clients[client_id] = {'queue': q, 'taskId': request.args.get('taskId')}
+
+        def generator():
+            try:
+                # initial comment
+                yield ': connected\n\n'
+                # initial snapshot
+                try:
+                    tasks = agg.get_all_tasks() or []
+                    yield _format_sse('tasks', tasks)
+                except Exception:
+                    pass
+
+                while True:
+                    try:
+                        msg = q.get(timeout=30)
+                        yield msg
+                    except queue.Empty:
+                        # keep-alive comment
+                        yield ': keepalive\n\n'
+            finally:
+                # cleanup
+                try:
+                    with sse_clients_lock:
+                        if client_id in sse_clients:
+                            del sse_clients[client_id]
+                except Exception:
+                    pass
+
+        return Response(stream_with_context(generator()), mimetype='text/event-stream', headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'})
+    except Exception:
+        abort(500)
+
 
 if __name__ == '__main__':
     # Default to binding to localhost:8000
