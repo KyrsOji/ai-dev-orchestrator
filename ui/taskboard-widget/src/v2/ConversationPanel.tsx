@@ -1,4 +1,6 @@
 import React, { useEffect, useState } from 'react'
+console.log('[CLIENT-DEBUG] ConversationPanel loaded')
+
 import ConversationTimeline from './ConversationTimeline'
 import ConversationComposer from './ConversationComposer'
 import sessionModel, { normalizeTaskSessions, getActiveSession, addMessageToActiveSession, addDecisionToActiveSession, createFollowUpSession, determineSessionStage } from './sessionModel'
@@ -22,8 +24,12 @@ export default function ConversationPanel({ task, followups, onTaskUpdate, onRef
     setLocalTask(task)
   }, [task])
 
+  React.useEffect(() => { try { console.log('[CLIENT-DEBUG] ConversationPanel onRefresh typeof', typeof onRefresh) } catch (e) {} }, [])
+
+
   function handleComposeSend(text: string) {
     setPendingMessage(text)
+
     setActionPreviewMode('choose')
     setActionModalOpen(true)
   }

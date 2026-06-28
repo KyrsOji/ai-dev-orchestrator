@@ -240,6 +240,15 @@ def stream():
         abort(500)
 
 
+
+@app.route('/taskboard/api/stream')
+def stream_alias():
+    """Compatibility route matching frontend path /taskboard/api/stream
+    Delegates to the existing /stream SSE implementation.
+    """
+    return stream()
+
+
 if __name__ == '__main__':
     # Default to binding to localhost:8000
     port = int(os.environ.get('TASKBOARD_API_PORT', '8000'))

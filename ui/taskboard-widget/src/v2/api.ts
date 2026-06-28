@@ -1,6 +1,8 @@
 export async function fetchTasks() {
+  try { console.log('[CLIENT-TRACE] fetchTasks calling fetch /taskboard/api/tasks') } catch (e) {}
   const res = await fetch('/taskboard/api/tasks')
   if (!res.ok) throw new Error('Failed to fetch tasks')
+  try { console.log('[CLIENT-TRACE] fetchTasks got response', res && res.status) } catch (e) {}
   return res.json()
 }
 

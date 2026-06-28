@@ -609,6 +609,8 @@ export default function TaskboardV2() {
         </div>
 
         <div style={{ flex: 1 }}>
+{(() => { try { console.log('[CLIENT-DEBUG] TaskboardV2 doRefresh typeof', typeof doRefresh) } catch (e) {} return null })()}
+          
           <ConversationPanel key={selectedKey} task={selectedTask} followups={followups} onTaskUpdate={handleTaskUpdate} onRefresh={async () => {
             try {
               await doRefresh()

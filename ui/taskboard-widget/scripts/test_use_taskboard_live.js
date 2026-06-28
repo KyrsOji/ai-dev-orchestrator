@@ -57,6 +57,17 @@ async function run() {
   try {
     const context = await browser.newContext({ viewport: { width: 1024, height: 768 } });
     const page = await context.newPage();
+    // Forward page console logs to the test runner stdout for debugging
+    page.on('console', (msg) => {
+      try { console.log('[page console]', msg.text()); } catch (e) {}
+    });
+    // Log network requests/responses for debugging
+    page.on('request', (req) => {
+      try { console.log('[page request]', req.method(), req.url()); } catch (e) {}
+    });
+    page.on('response', (res) => {
+      try { console.log('[page response]', res.status(), res.url()); } catch (e) {}
+    });
 
     // Inject EventSource stub before the app loads so connectExecutionStream picks it up
     await page.addInitScript((token) => {

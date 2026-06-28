@@ -21,15 +21,21 @@ export default function useTaskboardLive() {
 
     async function doRefresh() {
       try {
+        try { console.log('[CLIENT-TRACE] useTaskboardLive.doRefresh start') } catch (e) {}
         const t = await fetchTasks().catch(() => null)
+        try { console.log('[CLIENT-TRACE] useTaskboardLive.doRefresh fetched tasks', Array.isArray(t) ? t.length : typeof t) } catch (e) {}
         if (!cancelled && t && Array.isArray(t)) setTasks(t)
         const f = await fetchFollowups().catch(() => null)
+        try { console.log('[CLIENT-TRACE] useTaskboardLive.doRefresh fetched followups', Array.isArray(f) ? f.length : typeof f) } catch (e) {}
         if (!cancelled && f && Array.isArray(f)) setFollowups(f)
         const a = await fetchAgents().catch(() => null)
+        try { console.log('[CLIENT-TRACE] useTaskboardLive.doRefresh fetched agents', Array.isArray(a) ? a.length : typeof a) } catch (e) {}
         if (!cancelled && a) setAgents(Array.isArray(a) ? a : (Array.isArray(a.agents) ? a.agents : []))
         const r = await fetchRunnerStatus().catch(() => null)
+        try { console.log('[CLIENT-TRACE] useTaskboardLive.doRefresh fetched runner', r ? JSON.stringify(r) : r) } catch (e) {}
         if (!cancelled && r) setRunnerStatus(r)
         setPollTimedOut(false)
+        try { console.log('[CLIENT-TRACE] useTaskboardLive.doRefresh end') } catch (e) {}
       } catch (e) {
         // ignore
       }
@@ -198,15 +204,21 @@ export default function useTaskboardLive() {
 
   async function doRefreshOnce() {
     try {
+      try { console.log('[CLIENT-TRACE] useTaskboardLive.doRefreshOnce start') } catch (e) {}
       const t = await fetchTasks().catch(() => null)
+      try { console.log('[CLIENT-TRACE] useTaskboardLive.doRefreshOnce fetched tasks', Array.isArray(t) ? t.length : typeof t) } catch (e) {}
       if (t && Array.isArray(t)) setTasks(t)
       const f = await fetchFollowups().catch(() => null)
+      try { console.log('[CLIENT-TRACE] useTaskboardLive.doRefreshOnce fetched followups', Array.isArray(f) ? f.length : typeof f) } catch (e) {}
       if (f && Array.isArray(f)) setFollowups(f)
       const a = await fetchAgents().catch(() => null)
+      try { console.log('[CLIENT-TRACE] useTaskboardLive.doRefreshOnce fetched agents', Array.isArray(a) ? a.length : typeof a) } catch (e) {}
       if (a) setAgents(Array.isArray(a) ? a : (Array.isArray(a.agents) ? a.agents : []))
       const r = await fetchRunnerStatus().catch(() => null)
+      try { console.log('[CLIENT-TRACE] useTaskboardLive.doRefreshOnce fetched runner', r ? JSON.stringify(r) : r) } catch (e) {}
       if (r) setRunnerStatus(r)
       setPollTimedOut(false)
+      try { console.log('[CLIENT-TRACE] useTaskboardLive.doRefreshOnce end') } catch (e) {}
     } catch (e) {}
   }
 

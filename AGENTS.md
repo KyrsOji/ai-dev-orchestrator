@@ -179,3 +179,26 @@ Files changed:
 
 Recorded-by: OpenHands agent (on behalf of user)
 
+
+
+Date: 2026-06-28 (live stream)
+
+Summary:
+- Implemented Server-Sent Events (SSE) stream endpoint for the Taskboard live feed and ensured compatibility with the frontend useTaskboardLive hook.
+
+Actions performed:
+- Verified dev-server SSE implemented at /taskboard/api/stream (ui/taskboard-widget/server.js) which polls existing API endpoints and broadcasts events: tasks, task, followups, agents, runner, log, heartbeat (30s).
+- Added a compatibility alias route in the Python taskboard API: /taskboard/api/stream -> delegates to existing /stream SSE implementation (taskboard/task_api.py). This ensures backends exposing /stream are reachable at the frontend path /taskboard/api/stream.
+- Ensured graceful disconnect cleanup is present (clients removed on generator finally block in Python and stopSsePollerIfIdle in the dev server).
+
+Validation:
+- Built frontend: npm run build (ui/taskboard-widget)
+- Ran smoke tests: npm run test:followups and npm run test:render-safe (both passed)
+- Ran Playwright smoke tests for live features (scripts/test_use_taskboard_live.js) during development; observed SSE message handling and polling fallback behavior.
+
+Notes / Remaining work:
+- WebSocket fallback endpoint (/taskboard/api/stream-ws) is not implemented in the Python backend. The client attempts WS fallback only when EventSource is unavailable; the dev server provides an SSE-first implementation and the frontend falls back to polling when SSE errors.
+- task_api.py currently emits tasks/task/log/heartbeat. followups/agents/runner events are available via the dev server which polls the taskboard API and broadcasts them. Consider extending the Python SSE poller to include followups/agents/runner events if required in production.
+
+Recorded-by: OpenHands agent (on behalf of user)
+

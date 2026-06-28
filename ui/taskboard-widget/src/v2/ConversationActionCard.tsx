@@ -1,7 +1,7 @@
 import React, { useState } from 'react'
 import { safeText } from '../components/safeText'
 import { determineStage } from './lifecycle'
-import { dispatchDecision, pollTaskUntilExecution, postDecision } from './api'
+import { dispatchDecision, pollTaskUntilExecution, postDecision, fetchTasks } from './api'
 import { normalizeTaskSessions, getActiveSession, addMessageToActiveSession, addDecisionToActiveSession, createFollowUpSession, determineSessionStage } from './sessionModel'
 
 export default function ConversationActionCard({ task, onTaskUpdate, onRefresh }: any) {
@@ -331,7 +331,24 @@ export default function ConversationActionCard({ task, onTaskUpdate, onRefresh }
             } catch (e) {}
 
             // optionally refresh once immediately
-            try { if (typeof onRefresh === 'function') await onRefresh() } catch (e) {}
+            try {
+              if (typeof onRefresh === 'function') {
+                console.log('[CLIENT-DEBUG] Calling onRefresh() to refresh tasks (dispatch)')
+                await onRefresh()
+              } else {
+                try {
+                  // Fallback: directly fetch tasks endpoint to trigger server-side update when parent hook not provided
+                  await fetchTasks().catch(() => null)
+                  console.log('[CLIENT-DEBUG] Fallback fetchTasks() called after dispatch')
+                } catch (e) {}
+              }
+            } catch (e) {}
+
+            // Ensure tasks endpoint is fetched (force) to trigger server refresh if onRefresh did not
+            try {
+              try { await fetch('/taskboard/api/tasks') } catch (e) {}
+              console.log('[CLIENT-DEBUG] Forced fetch /taskboard/api/tasks after dispatch')
+            } catch (e) {}
 
             // Start bounded polling for execution report: poll every 2s up to 60s
             setIsPolling(true)
@@ -420,11 +437,23 @@ export default function ConversationActionCard({ task, onTaskUpdate, onRefresh }
               // Optionally refresh tasks if parent provided onRefresh
               try {
                 if (typeof onRefresh === 'function') {
+                  console.log('[CLIENT-DEBUG] Calling onRefresh() to refresh tasks (reject)')
                   await onRefresh()
+                } else {
+                  try {
+                    await fetchTasks().catch(() => null)
+                    console.log('[CLIENT-DEBUG] Fallback fetchTasks() called after reject')
+                  } catch (e) {}
                 }
               } catch (e) {
                 // ignore
               }
+
+              // Force a tasks fetch as a safety net
+              try {
+                try { await fetch('/taskboard/api/tasks') } catch (e) {}
+                console.log('[CLIENT-DEBUG] Forced fetch /taskboard/api/tasks after reject')
+              } catch (e) {}
             } catch (e: any) {
               console.error('reject dispatch error', e)
               try { setLocalDispatchError(e && e.message ? String(e.message) : 'Reject failed') } catch (e) {}

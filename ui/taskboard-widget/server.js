@@ -11,6 +11,14 @@ const DATA_FILE = '/tmp/taskboard-mvp.json';
 app.use(cors());
 app.use(bodyParser.json());
 
+// Trace incoming requests for debugging streaming/fetch behavior
+app.use((req, res, next) => {
+  try { console.log('[REQ-TRACE]', req.method, req.originalUrl || req.url) } catch (e) {}
+  next()
+})
+
+
+
 // Early guard: reject path-traversal attempts targeting results endpoints
 app.use((req, res, next) => {
   try {
@@ -32,6 +40,8 @@ app.use((req, res, next) => {
 });
 
 function genId(prefix = 'TASK-') {
+
+
   // Support PWA-YYYYMMDD-HHMMSS or TASK-<timestamp>
   const now = new Date();
   if (prefix === 'PWA-' || prefix === 'PWA') {
@@ -262,6 +272,7 @@ app.get('/taskboard/api/tasks', async (req, res) => {
     const result = await new Promise((resolve) => {
       const r = lib.get(AGG_URL, (resp) => {
         let data = '';
+
         resp.on('data', (chunk) => (data += chunk));
         resp.on('end', () => {
           try {
@@ -985,6 +996,7 @@ app.get('/taskboard/api/agents', (req, res) => {
         lastSeen: new Date().toISOString(),
         freshnessSeconds: 0,
         isFresh: true,
+
       },
       {
         agentId: 'future-agent-placeholder',
