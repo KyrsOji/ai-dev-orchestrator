@@ -116,7 +116,12 @@ async function run() {
 
     // Navigate to the app
     await page.goto(base + '/taskboard-v2', { waitUntil: 'networkidle' });
-    await page.waitForSelector('text=Engineering Sessions', { timeout: 5000 });
+    try {
+      await page.waitForSelector('text=Engineering Sessions', { timeout: 5000 });
+    } catch (e) {
+      // In mobile/tablet view the left panel may be collapsed; try the start button text
+      await page.waitForSelector('text=Start Engineering', { timeout: 5000 });
+    }
     console.log('App loaded');
     // Debug: dump body text to help diagnose what rendered
     const initialText = await page.evaluate(() => document.body.innerText);
