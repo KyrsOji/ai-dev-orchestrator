@@ -9,7 +9,7 @@ function genPwaId() {
 async function sleep(ms) { return new Promise(r => setTimeout(r, ms)) }
 
 ;(async () => {
-  const base = 'https://obiz.yahlife.com'
+  const base = process.env.TB_BASE || 'https://obiz.yahlife.com'
   const browser = await chromium.launch({ headless: true })
   const context = await browser.newContext()
 
