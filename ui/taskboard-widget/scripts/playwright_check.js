@@ -9,6 +9,7 @@ const { chromium } = require('playwright');
 
   const url = process.env.TB_BASE || 'http://127.0.0.1:3000/taskboard-v2';
 
+  let hadFailure = false;
   for (const vp of viewports) {
     const browser = await chromium.launch();
     const context = await browser.newContext({ viewport: { width: vp.width, height: vp.height } });
@@ -115,9 +116,10 @@ const { chromium } = require('playwright');
 
     if (!viewportOk) {
       console.error('Viewport checks failed for', vp.name);
+      hadFailure = true;
       process.exitCode = 2;
     }
   }
 
-  process.exit(0);
+  process.exit(hadFailure ? 2 : 0);
 })();
