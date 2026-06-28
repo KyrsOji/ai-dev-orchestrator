@@ -264,7 +264,7 @@ async function sleep(ms) { return new Promise(r => setTimeout(r, ms)) }
     if (typeof serverToken !== 'undefined' && serverToken) {
       await page.evaluate((t) => { try { localStorage.setItem('taskboard_standalone_token', t) } catch (e) {} }, serverToken)
     } else {
-      await page.evaluate(() => { try { localStorage.setItem('taskboard_standalone_token', 'test-token') } catch (e) {} })
+      await page.evaluate(() => { try { localStorage.setItem('taskboard_standalone_token', '<TOKEN>') } catch (e) {} })
     }
     const dispatchBtn = page.locator('button:has-text("Dispatch to Engineering")').first()
     await dispatchBtn.click()

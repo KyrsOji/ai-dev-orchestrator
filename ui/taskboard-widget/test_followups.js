@@ -44,7 +44,7 @@ async function runTests() {
   const port = 30000 + Math.floor(Math.random() * 20000);
   const env = Object.assign({}, process.env, {
     PORT: String(port),
-    TASKBOARD_API_TOKEN: 'test-token',
+    TASKBOARD_API_TOKEN: '<TOKEN>',
     FOLLOWUP_SUGGESTIONS_FILE: suggestionsFile,
     FOLLOWUP_DECISIONS_FILE: decisionsFile,
     FOLLOWUP_PUBLISHED_FILE: publishedFile,
@@ -118,7 +118,7 @@ async function runTests() {
   expect(rejectNoAuth.statusCode === 401, 'Reject without Authorization returns 401');
 
   // 6) Approve writes a decision through reviewer.followup_approval
-  const headers = { 'Content-Type': 'application/json', Authorization: 'Bearer test-token' };
+  const headers = { 'Content-Type': 'application/json', Authorization: 'Bearer <TOKEN>' };
   const approveResp = await httpRequest({ method: 'POST', port, path: '/taskboard/api/followups/s1/approve', headers, body: '{}' });
   expect(approveResp.statusCode === 200, 'Approve with token returns 200');
   let approveBody = null;

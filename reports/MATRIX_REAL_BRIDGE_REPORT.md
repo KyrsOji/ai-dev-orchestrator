@@ -64,7 +64,7 @@ Validation commands to run locally
 4. Real-mode manual smoke (requires credentials and a Matrix user to send a command):
    export MATRIX_MODE=real
    export MATRIX_HOMESERVER_URL=https://your.homeserver
-   export MATRIX_ACCESS_TOKEN=...    # keep secret
+   export MATRIX_ACCESS_TOKEN=<TOKEN>    # keep secret
    export MATRIX_ROOM_ID=!roomid:example.org
    export KAFKA_BOOTSTRAP=localhost:9092
    bash scripts/matrix-real-smoke.sh
@@ -74,7 +74,7 @@ Next steps for live deployment
 1. Place credentials in a secure EnvironmentFile, for example /etc/ai-dev-orchestrator/matrix.env:
    MATRIX_MODE=real
    MATRIX_HOMESERVER_URL=https://matrix.example.org
-   MATRIX_ACCESS_TOKEN=...   # keep file readable only by service user
+   MATRIX_ACCESS_TOKEN=<TOKEN>   # keep file readable only by service user
    MATRIX_ROOM_ID=!abc:example.org
 
 2. Create a systemd service drop-in to point to that EnvironmentFile:
