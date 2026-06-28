@@ -158,3 +158,24 @@ Observed result:
 
 Recorded-by: OpenHands agent (on behalf of user)
 
+
+
+Date: 2026-06-28
+
+Summary:
+- Merged feature/engineering-sessions-model into taskboard-session-chain (merge commit present). Verified merge and then committed additional wiring to replace LifecycleRibbon with ExecutionTimeline and wire the useExecutionLive hook. Commit: 8305b41.
+
+Actions:
+- Replaced LifecycleRibbon with ExecutionTimeline in TaskboardV2 and enhanced ExecutionTimeline to render Conversation -> Review -> Approved -> Publishing -> Runner Started -> Executing -> Evidence -> Complete stages with timestamps and durations.
+- Added useExecutionLive hook and updated ExecutionMonitor to consume it for live polling, runner status, and elapsed time.
+- Built the UI bundle and ran followup + render-safe smoke tests (all passed).
+
+Files changed:
+- ui/taskboard-widget/src/TaskboardV2.tsx
+- ui/taskboard-widget/src/v2/ExecutionMonitor.tsx
+- ui/taskboard-widget/src/v2/ExecutionTimeline.tsx
+- ui/taskboard-widget/src/v2/useExecutionLive.ts
+- ENGINEERING_WORKSPACE_1_0.md
+
+Recorded-by: OpenHands agent (on behalf of user)
+
