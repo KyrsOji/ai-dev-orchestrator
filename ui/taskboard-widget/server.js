@@ -1154,9 +1154,8 @@ app.post('/taskboard/api/task/decision', async (req, res) => {
       }
     });
 
-    // Respond quickly to client by redirecting to the current tasks endpoint so clients will perform a GET
-    // This helps the UI perform an immediate one-shot refresh after a standalone decision without blocking.
-    return res.redirect(303, '/taskboard/api/tasks');
+    // Respond quickly to client that the decision was received and async publish is scheduled
+    return res.json({ ok: true, published: false, meta: { async_publish: true } });
   } catch (e) {
     console.error('task decision handler error', e && e.message ? e.message : e);
     return res.status(500).json({ ok: false, error: 'internal server error' });
