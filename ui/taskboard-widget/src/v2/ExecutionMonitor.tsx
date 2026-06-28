@@ -83,7 +83,7 @@ function shortenPath(s: any, len = 70) {
 }
 
 export default function ExecutionMonitor({ task, openExecutionDetails }: { task: any; openExecutionDetails?: (exec: any) => void }) {
-  const { live, agents, runnerStub, isPolling, pollTimedOut, doRefresh: refresh } = useExecutionLive(task)
+  const { live, agents, runnerStub, isPolling, pollTimedOut, doRefresh: refresh, streamConnected } = useExecutionLive(task)
   const [showDetails, setShowDetails] = useState<boolean>(false)
   const [now, setNow] = useState<number>(Date.now())
 
@@ -112,6 +112,12 @@ export default function ExecutionMonitor({ task, openExecutionDetails }: { task:
   const exec = t.executionReport || t.execution || t.execution_report || null
 
   const execPhase = exec && (exec.phase || exec.stage || exec.step || exec.currentPhase) || null
+
+  // Return code (if present)
+  const returnCode = exec && (exec.returnCode || exec.return_code || exec.rc || exec.exitCode || exec.exit_code)
+
+  // Queue position / depth (if provided by backend)
+  const queuePosition = t && (t.queuePosition || t.queue_pos || t.queue_position || t.queue) || (exec && (exec.queuePosition || exec.queue_pos || exec.queue_position)) || null
 
 
   // Prefer explicit execution duration; otherwise derive from timestamps (and show live elapsed when running)
@@ -144,6 +150,7 @@ export default function ExecutionMonitor({ task, openExecutionDetails }: { task:
   const stdout = exec && (exec.stdout || exec.output || exec.response || exec.responsePreview || exec.response_preview) || null
   const stderr = exec && (exec.stderr || exec.errorOutput || null) || null
   const runDir = exec && (exec.runDirectory || exec.run_directory || exec.runDir) || null
+  const artifacts = exec && (exec.artifacts || exec.filesChanged || exec.files_changed || exec.files || exec.changedFiles) || null
 
   useEffect(() => {
     // When execution has started but not finished, update the 'now' timestamp every second
@@ -176,7 +183,7 @@ export default function ExecutionMonitor({ task, openExecutionDetails }: { task:
       <div style={{ display: 'flex', flexDirection: 'column', gap: 6, flex: 1 }}>
         <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
           <div style={{ fontSize: 13, color: '#6b7280' }}>Phase</div>
-          <div style={{ fontWeight: 800 }}>{phase}{execPhase && execPhase !== phase ? (' — ' + String(execPhase)) : ''}{isPolling ? ' \u00b7 polling' : ''}</div>
+          <div style={{ fontWeight: 800 }}>{phase}{execPhase && execPhase !== phase ? (' — ' + String(execPhase)) : ''}{isPolling ? ' \u00b7 polling' : ''}{streamConnected ? ' \u00b7 live' : ''}</div>
           <div style={{ marginLeft: 'auto', fontSize: 12, color: '#6b7280' }}>Last: {lastActivity ? formatIso(lastActivity) : 'unknown'}</div>
         </div>
 
@@ -193,6 +200,20 @@ export default function ExecutionMonitor({ task, openExecutionDetails }: { task:
 
           <div style={{ fontSize: 12, color: '#6b7280', marginLeft: 12 }}>Kafka:</div>
           <div style={{ fontWeight: 700 }}>{(runnerObj && (runnerObj.kafka || (runnerObj.raw && runnerObj.raw.kafka))) ? String(runnerObj.kafka || (runnerObj.raw && runnerObj.raw.kafka)) : 'unknown'}</div>
+
+          {queuePosition ? (
+            <div style={{ fontSize: 12, color: '#6b7280', marginLeft: 12 }}>Queue:</div>
+          ) : null}
+          {queuePosition ? (
+            <div style={{ fontWeight: 700 }}>{String(queuePosition)}</div>
+          ) : null}
+
+          {returnCode !== undefined && returnCode !== null ? (
+            <div style={{ fontSize: 12, color: '#6b7280', marginLeft: 12 }}>Exit:</div>
+          ) : null}
+          {returnCode !== undefined && returnCode !== null ? (
+            <div style={{ fontWeight: 700 }}>{String(returnCode)}</div>
+          ) : null}
 
           {durationText ? (
             <div style={{ marginLeft: 12, fontSize: 12, color: '#6b7280' }}>Elapsed: <strong style={{ fontWeight: 700 }}>{durationText}</strong></div>
@@ -227,6 +248,10 @@ export default function ExecutionMonitor({ task, openExecutionDetails }: { task:
 
           {!runDir ? (
             <button className="small" onClick={() => { if (openExecutionDetails) { openExecutionDetails(exec) } else { setShowDetails(true) } }} aria-label="Open execution details">View execution details</button>
+          ) : null}
+
+          {artifacts && Array.isArray(artifacts) && artifacts.length ? (
+            <button className="small" onClick={() => { if (openExecutionDetails) { openExecutionDetails(exec) } else { setShowDetails(true) } }} aria-label="Open artifacts">Open artifacts</button>
           ) : null}
 
           {pollTimedOut && !exec ? (
