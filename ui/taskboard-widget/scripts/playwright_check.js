@@ -65,14 +65,17 @@ const { chromium } = require('playwright');
     let viewportOk = true;
     let details = {};
     try {
-      await page.goto(url, { waitUntil: 'networkidle', timeout: 20000 });
+      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 20000 });
+
+      // Wait for body to become visible
+      await page.waitForSelector('body', { timeout: 5000, state: 'visible' });
 
       // Wait for execution monitor text to appear
       const execVisible = await page.locator('text=Execution').first().waitFor({ timeout: 10000 }).then(() => true).catch(() => false);
 
       // wait for SSE open (EventSource or WebSocket) or timeout
       try {
-        await page.waitForFunction(() => (window.__sse_opened && window.__sse_opened.length > 0), { timeout: 5000 });
+        await page.waitForFunction(() => (window.__sse_opened && window.__sse_opened.length > 0), { timeout: 10000 });
       } catch (e) {
         // no SSE opened within timeout
       }
