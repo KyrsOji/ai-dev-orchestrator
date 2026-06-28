@@ -2,6 +2,7 @@ import React, { useState } from 'react'
 import { safeText } from '../components/safeText'
 import { determineStage } from './lifecycle'
 import { dispatchDecision, pollTaskUntilExecution, postDecision } from './api'
+import { normalizeTaskSessions, getActiveSession, addMessageToActiveSession, addDecisionToActiveSession, createFollowUpSession, determineSessionStage } from './sessionModel'
 
 export default function ConversationActionCard({ task, onTaskUpdate, onRefresh }: any) {
   const [localDispatchError, setLocalDispatchError] = useState<string | null>(null)
@@ -81,8 +82,6 @@ export default function ConversationActionCard({ task, onTaskUpdate, onRefresh }
       id: 'custom-' + Date.now(),
       description: description,
       payload: { instructions },
-      // mark follow-up when creating from a completed task
-      followup: (stage === 'Complete') ? true : false,
     }
 
     // update local UI state immediately
@@ -92,23 +91,29 @@ export default function ConversationActionCard({ task, onTaskUpdate, onRefresh }
     // Propagate the change to parent task state if callback provided
     try {
       const base = task || {}
-      // Append a user message so the timeline and last activity update
-      const existingMessages = Array.isArray(base.messages) ? base.messages.slice() : []
       const msg = { id: 'msg-' + Date.now(), author: 'user', text: (instructions && instructions.length) ? instructions : (description || ''), createdAt: new Date().toISOString() }
-      existingMessages.push(msg)
 
-      let updatedTask: any = { ...base, messages: existingMessages, proposedActions: [...(Array.isArray(base.proposedActions) ? base.proposedActions : []), newAction], selectedAction: newAction.id, updatedAt: new Date().toISOString(), lastActivityAt: new Date().toISOString() }
-
-      // If this is a follow-up on a completed task, mark follow-up metadata and set followup status
       try {
-        if (stage === 'Complete') {
-          updatedTask.status = 'followup'
-          updatedTask.followUp = { active: true, id: newAction.id, createdAt: new Date().toISOString(), parentExecutionId: (base && (base.executionReport || base.execution || base.execution_report) && ((base.executionReport && (base.executionReport.id || base.executionReport.runId)) || (base.execution && (base.execution.id || base.execution.runId)) || null)) || null }
+        const normalized = normalizeTaskSessions(base)
+        const active = getActiveSession(normalized)
+        const stageLocal = determineSessionStage(active)
+        let updatedTask: any = null
+        if (stageLocal === 'Complete' || (active && active.immutable)) {
+          updatedTask = createFollowUpSession(base, msg, newAction)
+        } else {
+          const withMsg = addMessageToActiveSession(base, msg)
+          updatedTask = addDecisionToActiveSession(withMsg, newAction)
         }
-      } catch (e) {}
 
-      if (typeof onTaskUpdate === 'function') {
-        onTaskUpdate(updatedTask)
+        if (typeof onTaskUpdate === 'function') {
+          onTaskUpdate(updatedTask)
+        }
+      } catch (e) {
+        // fallback to legacy behavior
+        const existingMessages = Array.isArray(base.messages) ? base.messages.slice() : []
+        existingMessages.push(msg)
+        const updatedTask: any = { ...base, messages: existingMessages, proposedActions: [...(Array.isArray(base.proposedActions) ? base.proposedActions : []), newAction], selectedAction: newAction.id, updatedAt: new Date().toISOString(), lastActivityAt: new Date().toISOString() }
+        if (typeof onTaskUpdate === 'function') onTaskUpdate(updatedTask)
       }
     } catch (e) {
       // ignore and keep local-only state
@@ -122,7 +127,7 @@ export default function ConversationActionCard({ task, onTaskUpdate, onRefresh }
 
   return (
     <div style={{ padding: 16, borderRadius: 14, background: '#fff', border: '1px solid #eef2ff', boxShadow: '0 6px 18px #02061708' }}>
-      <div style={{ fontWeight: 900, marginBottom: 10, fontSize: 16 }}>Review Decisions</div>
+      {!(stage === 'Complete' || (task && task.followUp && task.followUp.active)) ? <div style={{ fontWeight: 900, marginBottom: 10, fontSize: 16 }}>Review Decisions</div> : null}
       {/* Summary line: different when viewing a completed task or an active follow-up */}
       {(() => {
         if (stage === 'Complete' || (task && task.followUp && task.followUp.active)) {
@@ -504,30 +509,79 @@ export default function ConversationActionCard({ task, onTaskUpdate, onRefresh }
                   }
                 } catch (e) { selId = null }
 
-                const updatedTask: any = {
-                  ...base,
-                  status: 'approved',
-                  decision: 'approved',
-                  approved: true,
-                  approvedAt: new Date().toISOString(),
-                  selectedAction: selId,
-                  updatedAt: new Date().toISOString(),
-                  lastActivityAt: new Date().toISOString(),
-                }
-
-                // If this approval is for a follow-up, preserve followUp metadata
+                // Normalize sessions and update active session approval
                 try {
-                  const isFollowupSelected = Boolean((selId && Array.isArray(base.proposedActions) && base.proposedActions.find((a: any) => a.id === selId && a.followup)) || (base && String(base.status).toLowerCase() === 'followup') || (base.followUp && base.followUp.active && base.followUp.id === selId))
-                  if (isFollowupSelected) {
-                    updatedTask.followUp = { ...(base.followUp || {}), id: selId, approvedAt: new Date().toISOString(), active: true }
-                  }
-                } catch (e) {}
+                  const normalized = normalizeTaskSessions(base)
+                  const sessions = Array.isArray(normalized.sessions) ? normalized.sessions.slice() : []
+                  const activeId = normalized.activeSessionId || (sessions.length ? sessions[sessions.length - 1].sessionId : null)
+                  const now = new Date().toISOString()
 
-                if (typeof onTaskUpdate === 'function') {
-                  onTaskUpdate(updatedTask)
-                } else {
-                  try { if (task) { task.status = 'approved'; task.decision = 'approved' } } catch (e) {}
+                  let updatedSessions = sessions.map((s: any) => {
+                    if (s && s.sessionId === activeId) {
+                      const reviewDecision = s.reviewDecision ? { ...s.reviewDecision } : { proposals: [] }
+                      if (selId) reviewDecision.selectedActionId = selId
+                      return { ...s, reviewDecision, selectedActionId: selId || s.selectedActionId || null, approval: { value: true, approver: 'human', approvedAt: now }, status: 'Approved', updatedAt: now }
+                    }
+                    return s
+                  })
+
+                  // If no active session found, create one
+                  if (!activeId) {
+                    const newSession = { sessionId: 'sess-' + Date.now().toString(36), title: base.title || 'Follow-up', createdAt: now, updatedAt: now, messages: [], reviewDecision: { proposals: [], selectedActionId: selId || null }, selectedActionId: selId || null, approval: { value: true, approver: 'human', approvedAt: now }, dispatch: null, executionReport: null, artifacts: [], timeline: [], status: 'Approved', immutable: false }
+                    updatedSessions.push(newSession)
+                    normalized.activeSessionId = newSession.sessionId
+                  } else {
+                    normalized.activeSessionId = activeId
+                  }
+
+                  const updatedNormalized: any = { ...normalized, sessions: updatedSessions, updatedAt: now }
+
+                  // Top-level compatibility fields
+                  updatedNormalized.status = 'approved'
+                  updatedNormalized.decision = 'approved'
+                  updatedNormalized.approved = true
+                  updatedNormalized.approvedAt = now
+                  updatedNormalized.selectedAction = selId || updatedNormalized.selectedAction || null
+
+                  // If this approval is for a follow-up, preserve followUp metadata
+                  try {
+                    const isFollowupSelected = Boolean((selId && Array.isArray(base.proposedActions) && base.proposedActions.find((a: any) => a.id === selId && a.followup)) || (base && String(base.status).toLowerCase() === 'followup') || (base.followUp && base.followUp.active && base.followUp.id === selId))
+                    if (isFollowupSelected) {
+                      updatedNormalized.followUp = { ...(base.followUp || {}), id: selId, approvedAt: now, active: true }
+                    }
+                  } catch (e) {}
+
+                  if (typeof onTaskUpdate === 'function') {
+                    onTaskUpdate(updatedNormalized)
+                  } else {
+                    try { if (task) { task.status = 'approved'; task.decision = 'approved'; task.approved = true } } catch (e) {}
+                  }
+                } catch (e) {
+                  // Fallback to legacy top-level update if session normalization fails
+                  const updatedTask: any = {
+                    ...base,
+                    status: 'approved',
+                    decision: 'approved',
+                    approved: true,
+                    approvedAt: new Date().toISOString(),
+                    selectedAction: selId,
+                    updatedAt: new Date().toISOString(),
+                    lastActivityAt: new Date().toISOString(),
+                  }
+                  try {
+                    const isFollowupSelected = Boolean((selId && Array.isArray(base.proposedActions) && base.proposedActions.find((a: any) => a.id === selId && a.followup)) || (base && String(base.status).toLowerCase() === 'followup') || (base.followUp && base.followUp.active && base.followUp.id === selId))
+                    if (isFollowupSelected) {
+                      updatedTask.followUp = { ...(base.followUp || {}), id: selId, approvedAt: new Date().toISOString(), active: true }
+                    }
+                  } catch (e) {}
+
+                  if (typeof onTaskUpdate === 'function') {
+                    onTaskUpdate(updatedTask)
+                  } else {
+                    try { if (task) { task.status = 'approved'; task.decision = 'approved' } } catch (e) {}
+                  }
                 }
+
               } catch (e) {}
             }}>Approve</button>
               <button className="big" style={{ flex: 1, background: '#ef4444', color: '#fff', border: 'none' }} onClick={() => handleReject()}>Reject</button>

@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import ConversationTimeline from './ConversationTimeline'
 import ConversationComposer from './ConversationComposer'
+import sessionModel, { normalizeTaskSessions, getActiveSession, addMessageToActiveSession, addDecisionToActiveSession, createFollowUpSession, determineSessionStage } from './sessionModel'
 
 function getFirstSentence(text: string) {
   if (!text) return ''
@@ -34,18 +35,22 @@ export default function ConversationPanel({ task, followups, onTaskUpdate, onRef
   function handleContinueConversation() {
     const text = pendingMessage
     const base = localTask || task || {}
-    const updated = { ...base }
-    // Preserve existing notes for backward compatibility; append message into messages[]
-    const existingMessages = Array.isArray(updated.messages) ? updated.messages.slice() : []
     const msg = { id: uuid('msg-'), author: 'user', text: text, createdAt: new Date().toISOString() }
-    existingMessages.push(msg)
-    updated.messages = existingMessages
-    updated.updatedAt = new Date().toISOString()
-    if (typeof onTaskUpdate === 'function') {
-      onTaskUpdate(updated)
-    } else {
-      setLocalTask(updated)
+    try {
+      const updated = addMessageToActiveSession(base, msg)
+      if (typeof onTaskUpdate === 'function') onTaskUpdate(updated)
+      else setLocalTask(updated)
+    } catch (e) {
+      // fallback to legacy behavior
+      const updated = { ...base }
+      const existingMessages = Array.isArray(updated.messages) ? updated.messages.slice() : []
+      existingMessages.push(msg)
+      updated.messages = existingMessages
+      updated.updatedAt = new Date().toISOString()
+      if (typeof onTaskUpdate === 'function') onTaskUpdate(updated)
+      else setLocalTask(updated)
     }
+
     setActionModalOpen(false)
     setPendingMessage('')
   }
@@ -61,24 +66,38 @@ export default function ConversationPanel({ task, followups, onTaskUpdate, onRef
     }
 
     const base = localTask || task || {}
-    // Append the user message to the messages[] stream so the timeline and last-activity update immediately
-    const existingMessages = Array.isArray(base.messages) ? base.messages.slice() : []
     const msg = { id: uuid('msg-'), author: 'user', text: text, createdAt: new Date().toISOString() }
-    existingMessages.push(msg)
 
-    const updated = {
-      ...base,
-      messages: existingMessages,
-      proposedActions: [...(Array.isArray(base.proposedActions) ? base.proposedActions : []), newAction],
-      selectedAction: newAction.id,
-      updatedAt: new Date().toISOString(),
-      lastActivityAt: new Date().toISOString(),
-    }
+    try {
+      const normalized = normalizeTaskSessions(base)
+      const active = getActiveSession(normalized)
+      const stage = determineSessionStage(active)
+      let updated: any = null
+      if (stage === 'Complete' || (active && active.immutable)) {
+        // create a brand-new follow-up session (do not mutate completed session)
+        updated = createFollowUpSession(base, msg, newAction)
+      } else {
+        // add message to active session then append decision
+        const withMsg = addMessageToActiveSession(base, msg)
+        updated = addDecisionToActiveSession(withMsg, newAction)
+      }
 
-    if (typeof onTaskUpdate === 'function') {
-      onTaskUpdate(updated)
-    } else {
-      setLocalTask(updated)
+      if (typeof onTaskUpdate === 'function') onTaskUpdate(updated)
+      else setLocalTask(updated)
+    } catch (e) {
+      // fallback to legacy behavior if anything goes wrong
+      const existingMessages = Array.isArray(base.messages) ? base.messages.slice() : []
+      existingMessages.push(msg)
+      const updated = {
+        ...base,
+        messages: existingMessages,
+        proposedActions: [...(Array.isArray(base.proposedActions) ? base.proposedActions : []), newAction],
+        selectedAction: newAction.id,
+        updatedAt: new Date().toISOString(),
+        lastActivityAt: new Date().toISOString(),
+      }
+      if (typeof onTaskUpdate === 'function') onTaskUpdate(updated)
+      else setLocalTask(updated)
     }
 
     setActionModalOpen(false)

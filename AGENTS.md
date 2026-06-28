@@ -95,3 +95,66 @@ Commit:
 
 Recorded-by: OpenHands agent (on behalf of user)
 
+
+Date: 2026-06-27 (engineering-sessions-model)
+
+Summary:
+- Introduced a first-class "Engineering Sessions" / Execution Cycle model for Taskboard V2.
+  - Conversation -> sessions[] (ordered oldest->newest) -> each session is an Execution Cycle containing prompt, messages, reviewDecision/proposals, approval, dispatch, executionReport, artifacts, status, immutable flag.
+- Follow-up decisions now create a new Execution Cycle instead of mutating completed executions.
+
+Actions performed:
+- Added ui/taskboard-widget/src/v2/sessionModel.ts with helpers for normalizing legacy tasks into sessions, creating follow-up sessions, attaching execution reports, and safe helpers for adding messages/decisions to the active session.
+- Updated front-end components to use sessions where appropriate:
+  - ui/taskboard-widget/src/v2/ConversationPanel.tsx  uses sessionModel helpers when creating messages and review decisions; follow-ups on completed sessions create a new session.
+  - ui/taskboard-widget/src/v2/ConversationTimeline.tsx  renders sessions newest-first; active session expanded, previous sessions shown as read-only history.
+  - ui/taskboard-widget/src/v2/ConversationActionCard.tsx  creates follow-up sessions for completed tasks; appends decisions to active session otherwise.
+- Server: ui/taskboard-widget/server.js now prefers attaching incoming execution reports to sessions[] when present, or appends a new immutable session if no target found.
+- UI/UX: Composer (Continue Conversation) remains available and writes into the active session.
+
+Files changed (latest):
+- ui/taskboard-widget/src/v2/sessionModel.ts (new)
+- ui/taskboard-widget/src/v2/ConversationPanel.tsx
+- ui/taskboard-widget/src/v2/ConversationTimeline.tsx
+- ui/taskboard-widget/src/v2/ConversationActionCard.tsx
+- ui/taskboard-widget/src/TaskboardV2.tsx (preserve session merges on save)
+- ui/taskboard-widget/server.js (attach reports to sessions)
+
+Build / Test:
+- npm run build (ui/taskboard-widget): success  dist/assets/index-CiS5MCJj.js
+- npm run test:followups: ALL PASSED
+- npm run test:render-safe: ALL PASSED
+- Playwright smoke (scripts/smoke_v3_ux_001.js): pageStatus 200, execMonitorPresent true, screenshot /tmp/playwright_v3_ux_001.png
+
+Notes / Next steps:
+- This is a non-incremental architectural step; much of the codebase still supports legacy flat fields for compatibility (executionReport, executionHistory, proposedActions). The sessionModel normalizer maps legacy fields to sessions and preserves compatibility.
+- Recommended follow-ups:
+  - Comprehensive refactor to consume sessions across all components (ExecutionMonitor, ConversationMessage, ArtifactsWorkspace, ActionCard)  aim to remove legacy top-level executionReport usage gradually.
+  - Add automated migration tooling to convert persisted tasks to the sessions model where appropriate; include a one-time migration script in server utilities.
+  - Add unit/integration tests specifically for session lifecycle (follow-up creation -> dispatch -> execution -> new cycle created and attached).
+
+Recorded-by: OpenHands agent (on behalf of user)
+
+
+
+Date: 2026-06-27 (follow-up lifecycle fix)
+
+Summary:
+- Fixed approval persistence bug where approving a follow-up did not persist into the active session.
+- Root cause: handleTaskUpdate merged sessions incorrectly, preferring stored existing session objects over incoming updated session objects with the same sessionId. This caused session-level updates (approval/status/selectedActionId) to be silently discarded.
+
+Actions performed:
+- Update TaskboardV2.handleTaskUpdate session merge to prefer updated sessions for matching sessionId (new sessions override existing ones).
+- Ensure ConversationActionCard Approve path writes session-level approval (approval object, status 'Approved', and reviewDecision.selectedActionId) and also updates legacy top-level compatibility fields.
+- Add/extend smoke_followup_session_lifecycle.js to assert approval persistence and previous session immutability.
+
+Files changed:
+- ui/taskboard-widget/src/TaskboardV2.tsx
+- ui/taskboard-widget/src/v2/ConversationActionCard.tsx
+- ui/taskboard-widget/scripts/smoke_followup_session_lifecycle.js
+
+Observed result:
+- Approve now persists into the active follow-up session and is reflected in server-stored task object. Previous completed session remains immutable and its executionReport is preserved.
+
+Recorded-by: OpenHands agent (on behalf of user)
+

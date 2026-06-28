@@ -309,12 +309,77 @@ app.get('/taskboard/api/tasks', async (req, res) => {
           try { const st = fs.statSync(execPath); if (st && st.mtime) updatedAt = updatedAt || st.mtime.toISOString(); } catch (e) {}
           updatedAt = updatedAt || new Date().toISOString();
 
-          // If a stored task exists with both matching taskId and conversationId, attach the execution report (do not overwrite other metadata)
+          // If a stored task exists for this taskId, attach the execution report to the active session.
+          // DO NOT replace the stored task with a synthetic entry — prefer attaching and preserving sessions.
           let attached = false;
-          if (taskId && conversationId) {
-            const idx = data.findIndex((t) => t && t.taskId === taskId && (t.conversationId === conversationId || t.conversation_id === conversationId));
+          if (taskId) {
+            const idx = data.findIndex((t) => t && t.taskId === taskId);
             if (idx >= 0) {
-              try { data[idx].executionReport = data[idx].executionReport || report; } catch (e) {}
+              try {
+                const tgt = data[idx];
+
+                // ensure sessions array and executionHistory exist
+                tgt.sessions = Array.isArray(tgt.sessions) ? tgt.sessions : [];
+                tgt.executionHistory = Array.isArray(tgt.executionHistory) ? tgt.executionHistory : [];
+
+                // prefer activeSessionId when present
+                const activeSessionId = tgt.activeSessionId || (tgt.sessions.length ? tgt.sessions[tgt.sessions.length - 1].sessionId : null);
+                const runId = report && (report.runId || report.id || report.run_id);
+                const parentId = report && (report.parentExecutionId || report.parentExecution_id || report.parentExecution);
+
+                let attachedToSession = false;
+
+                if (activeSessionId) {
+                  const s = tgt.sessions.find((ss) => ss && ss.sessionId === activeSessionId);
+                  if (s) {
+                    // preserve prior executionReport by moving it into executionHistory
+                    if (s.executionReport) {
+                      tgt.executionHistory.push(s.executionReport);
+                    } else if (tgt.executionReport) {
+                      // legacy top-level executionReport: preserve it as history
+                      tgt.executionHistory.push(tgt.executionReport);
+                    }
+
+                    s.executionReport = report;
+                    s.updatedAt = s.updatedAt || updatedAt;
+                    attachedToSession = true;
+                  }
+                }
+
+                if (!attachedToSession && Array.isArray(tgt.sessions) && tgt.sessions.length) {
+                  // try matching by runId/parentId, or attach to first session without an executionReport
+                  for (let s of tgt.sessions) {
+                    try {
+                      if (!s.executionReport) {
+                        s.executionReport = report;
+                        s.updatedAt = s.updatedAt || updatedAt;
+                        attachedToSession = true;
+                        break;
+                      } else if (runId && (s.executionReport.id === runId || s.executionReport.runId === runId)) {
+                        // already matches
+                        attachedToSession = true;
+                        break;
+                      } else if (parentId && (s.executionReport.id === parentId || s.executionReport.runId === parentId)) {
+                        attachedToSession = true;
+                        break;
+                      }
+                    } catch (e) {}
+                  }
+                }
+
+                if (!attachedToSession) {
+                  // append as a new immutable session
+                  const newSession = { sessionId: 'sess-' + Date.now().toString(36), createdAt: updatedAt, updatedAt: updatedAt, title: tgt.title || '', messages: [], reviewDecision: { proposals: [] }, selectedActionId: null, approval: null, dispatch: null, executionReport: report, artifacts: [], timeline: [], status: 'Complete', immutable: true };
+                  tgt.sessions.push(newSession);
+                }
+
+                // Keep legacy top-level executionReport populated from active session for compatibility
+                const latestSession = tgt.sessions.find(s => s && s.sessionId === (tgt.activeSessionId || (tgt.sessions.length ? tgt.sessions[tgt.sessions.length - 1].sessionId : null)));
+                if (latestSession && latestSession.executionReport) {
+                  tgt.executionReport = latestSession.executionReport;
+                }
+
+              } catch (e) {}
               attached = true;
             }
           }

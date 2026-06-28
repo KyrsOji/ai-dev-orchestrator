@@ -297,6 +297,30 @@ export default function TaskboardV2() {
               // ignore history merge errors
             }
           }
+
+          // Merge sessions if present so we don't lose historical sessions when saving
+          try {
+            const existingSessions = Array.isArray(existing.sessions) ? existing.sessions.slice() : []
+            const newSessions = Array.isArray(updatedTask.sessions) ? updatedTask.sessions.slice() : []
+            if (existingSessions.length && newSessions.length) {
+              // Prefer fields from newSessions when sessionId matches (updated sessions should override stored ones)
+              try {
+                const merged = existingSessions.map((es: any) => {
+                  const ns = newSessions.find((n: any) => n && n.sessionId === es.sessionId)
+                  return ns || es
+                })
+                // append any entirely new sessions not present in existingSessions
+                const appended = newSessions.filter((ns: any) => !existingSessions.some((es: any) => es && es.sessionId === ns.sessionId))
+                updatedTask = { ...updatedTask, sessions: merged.concat(appended) }
+              } catch (e) {
+                // fallback to simplistic concat if mapping fails
+                const merged = existingSessions.concat(newSessions.filter((ns: any) => !existingSessions.some((es: any) => es && es.sessionId === ns.sessionId)))
+                updatedTask = { ...updatedTask, sessions: merged }
+              }
+            }
+          } catch (e) {
+            // ignore session merge errors
+          }
         }
       } catch (e) {}
 
