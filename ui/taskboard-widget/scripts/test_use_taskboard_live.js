@@ -223,6 +223,10 @@ async function run() {
 
     console.log('All live-hook tests passed');
 
+    const screenshotPath = `/tmp/taskboard_live_${process.env.VIEWPORT || 'desktop'}.png`;
+    try { await page.screenshot({ path: screenshotPath, fullPage: true }) } catch (e) { console.error('failed to save screenshot', e) }
+    console.log('screenshot saved', screenshotPath);
+
     await context.close();
     await browser.close();
 
