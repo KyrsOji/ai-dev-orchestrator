@@ -1139,7 +1139,7 @@ app.post('/taskboard/api/task/decision', async (req, res) => {
         const producerEnv = process.env.KAFKA_PRODUCER_CMD;
         function which(cmd) {
           try {
-            const out = spawnSync('which', [cmd], { encoding: 'utf8' });
+            const out = spawnSync('which', [cmd], { encoding: 'utf8', env: childEnv(false) });
             if (out && out.status === 0) return out.stdout.trim();
           } catch (e) {}
           return null;
