@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from 'react'
 import ConversationList from './v2/ConversationList'
 import ConversationPanel from './v2/ConversationPanel'
-import LifecycleRibbon from './v2/LifecycleRibbon'
+import ExecutionTimeline from './v2/ExecutionTimeline'
+import ExecutionMonitor from './v2/ExecutionMonitor'
 
 import OperationsPanel from './v2/OperationsPanel'
 import { fetchTasks, fetchFollowups, fetchRunnerStatus, fetchAgents } from './v2/api'
@@ -629,7 +630,8 @@ export default function TaskboardV2() {
           {successMessage ? (
             <div style={{ padding: 8, background: '#ecfdf5', color: '#065f46', borderRadius: 8, marginBottom: 8 }}>{successMessage}</div>
           ) : null}
-          <LifecycleRibbon task={selectedTask} />
+          <ExecutionMonitor task={selectedTask} />
+          <ExecutionTimeline task={selectedTask} />
         </div>
 
         <div style={{ flex: 1 }}>
