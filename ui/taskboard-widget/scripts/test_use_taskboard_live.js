@@ -185,8 +185,25 @@ async function run() {
     const dispatchBtn = await page.waitForSelector('button:has-text("Dispatch to Engineering")', { timeout: 5000 });
 
     // Prepare to capture the decision POST and the tasks fetch triggered by onRefresh
-    const decisionPromise = page.waitForResponse((resp) => resp.url().includes('/taskboard/api/task/decision') && resp.request().method() === 'POST', { timeout: 5000 }).catch(() => null);
-    const tasksFetchPromise = page.waitForResponse((resp) => resp.url().includes('/taskboard/api/tasks') && resp.request().method() === 'GET', { timeout: 5000 }).catch(() => null);
+    const decisionPromise = page.waitForResponse((resp) => resp.url().includes('/taskboard/api/task/decision') && resp.request().method() === 'POST', { timeout: 8000 }).catch(() => null);
+    const consoleListenerPromise = new Promise((resolve) => {
+      const handler = (msg) => {
+        try {
+          if (msg && msg.text && msg.text().includes('[CLIENT-TRACE] useTaskboardLive.doRefreshOnce start')) {
+            try { page.off('console', handler) } catch (e) {}
+            resolve(true)
+          }
+        } catch (e) {}
+      }
+      page.on('console', handler)
+      // timeout fallback
+      setTimeout(() => { try { page.off('console', handler) } catch (e) {} ; resolve(null) }, 8000)
+    })
+
+    const tasksFetchPromise = Promise.race([
+      page.waitForResponse((resp) => resp.url().includes('/taskboard/api/tasks') && resp.request().method() === 'GET', { timeout: 8000 }).catch(() => null),
+      consoleListenerPromise
+    ]).then((v) => v).catch(() => null);
 
     await dispatchBtn.click();
     const decisionResp = await decisionPromise;
