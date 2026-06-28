@@ -11,6 +11,57 @@ const DATA_FILE = '/tmp/taskboard-mvp.json';
 app.use(cors());
 app.use(bodyParser.json());
 
+
+// Helper: load TASKBOARD_API_TOKEN from env or a file pointed by TASKBOARD_API_TOKEN_FILE
+function getServerToken() {
+  let t = process.env.TASKBOARD_API_TOKEN || null;
+  if (!t && process.env.TASKBOARD_API_TOKEN_FILE) {
+    try {
+      t = fs.readFileSync(process.env.TASKBOARD_API_TOKEN_FILE, 'utf8').trim();
+    } catch (e) {
+      t = null;
+    }
+  }
+  return t;
+}
+
+// Helper: require Bearer Authorization header and validate against configured server token
+function requireBearerAuth(req, res) {
+  const authHeader = req.headers.authorization || req.headers.Authorization || '';
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    res.status(401).json({ error: 'Missing Authorization header' });
+    return null;
+  }
+  const provided = authHeader.slice('Bearer '.length).trim();
+  const serverToken = getServerToken();
+  if (!serverToken) {
+    // Server is not configured to validate tokens
+    console.error('TASKBOARD_API_TOKEN not configured');
+    res.status(503).json({ error: 'Server misconfiguration: TASKBOARD_API_TOKEN not configured' });
+    return null;
+  }
+  if (provided !== serverToken) {
+    res.status(403).json({ error: 'Invalid token' });
+    return null;
+  }
+  return { provided, serverToken };
+}
+
+// Ensure child processes inherit the resolved TASKBOARD_API_TOKEN so python helper scripts
+// receive it even when spawned with a copy of process.env.
+(function propagateServerTokenToEnv() {
+  try {
+    const resolved = getServerToken();
+    if (resolved) {
+      process.env.TASKBOARD_API_TOKEN = resolved;
+      console.log('[CONFIG] TASKBOARD_API_TOKEN loaded into process.env');
+    }
+  } catch (e) {
+    // non-fatal
+  }
+})();
+
+
 // Trace incoming requests for debugging streaming/fetch behavior
 app.use((req, res, next) => {
   try { console.log('[REQ-TRACE]', req.method, req.originalUrl || req.url) } catch (e) {}
@@ -61,38 +112,44 @@ function genId(prefix = 'TASK-') {
 function readData() {
   try {
     if (!fs.existsSync(DATA_FILE)) {
-      // Create sample tasks with generated IDs so UIs don't accidentally rely on a static TASK-1 placeholder
-      const sample = [
-        {
-          taskId: genId('TASK-'),
-          title: 'Fix memory leak in service A',
-          status: 'pending_review',
-          openhandsResponse: 'OpenHands suggests patch xyz to close file handles.',
-          reviewerSummary: 'Reviewer: reproduce locally; patch seems reasonable.',
-          proposedActions: [
-            { id: 'act-1', type: 'commit', description: 'Apply memory-fix patch', payload: {} }
-          ],
-          selectedAction: null,
-          notes: ''
-        },
-        {
-          taskId: genId('TASK-'),
-          title: 'Update README for new API',
-          status: 'approved',
-          openhandsResponse: 'OpenHands created draft doc changes.',
-          reviewerSummary: 'Docs ok, ready to merge.',
-          proposedActions: [
-            { id: 'act-2', type: 'docs', description: 'Merge docs PR', payload: {} }
-          ],
-          selectedAction: 'act-2',
-          notes: 'Merged by automation.'
-        }
-      ];
-      fs.writeFileSync(DATA_FILE, JSON.stringify(sample, null, 2));
-      return sample;
+      // Create sample tasks only in test/fixture mode. In production, avoid shipping demo data.
+      const useFixtures = process.env.NODE_ENV === 'test' || (process.env.TASKBOARD_USE_FIXTURES || '').toString().toLowerCase() === 'true';
+      if (useFixtures) {
+        // Create sample tasks with generated IDs so UIs don't accidentally rely on a static TASK-1 placeholder
+        const sample = [
+          {
+            taskId: genId('TASK-'),
+            title: 'Fix memory leak in service A',
+            status: 'pending_review',
+            openhandsResponse: 'OpenHands suggests patch xyz to close file handles.',
+            reviewerSummary: 'Reviewer: reproduce locally; patch seems reasonable.',
+            proposedActions: [
+              { id: 'act-1', type: 'commit', description: 'Apply memory-fix patch', payload: {} }
+            ],
+            selectedAction: null,
+            notes: ''
+          },
+          {
+            taskId: genId('TASK-'),
+            title: 'Update README for new API',
+            status: 'approved',
+            openhandsResponse: 'OpenHands created draft doc changes.',
+            reviewerSummary: 'Docs ok, ready to merge.',
+            proposedActions: [
+              { id: 'act-2', type: 'docs', description: 'Merge docs PR', payload: {} }
+            ],
+            selectedAction: 'act-2',
+            notes: 'Merged by automation.'
+          }
+        ];
+        fs.writeFileSync(DATA_FILE, JSON.stringify(sample, null, 2));
+        return sample;
+      }
+      // In non-fixture mode return empty list rather than populating demo tasks
+      return [];
     } else {
       const content = fs.readFileSync(DATA_FILE, 'utf8');
-      return JSON.parse(content);
+      try { return JSON.parse(content); } catch (e) { console.error('readData json parse error', e); return []; }
     }
   } catch (e) {
     console.error('readData error', e);
@@ -687,36 +744,39 @@ app.get('/api/agents', (req, res) => {
     return res.json({ agents })
   } catch (e) {
     console.warn('Failed to read agent registry', e && e.message ? e.message : e)
-    // static fallback
-    const fallback = [
-      {
-        agentId: 'ofbiz-dev-01',
-        hostname: 'ubuntu-16gb-sin-1',
-        roles: ['ofbiz'],
-        status: 'idle',
-        cpuCount: 8,
-        memoryGb: 15.2425,
-        diskFreeGb: 272.77,
-        loadAverage: 3.36,
-        lastSeen: new Date().toISOString(),
-        freshnessSeconds: 0,
-        isFresh: true,
-      },
-      {
-        agentId: 'future-agent-placeholder',
-        hostname: 'another-server',
-        roles: ['general'],
-        status: 'idle',
-        cpuCount: 2,
-        memoryGb: 4,
-        diskFreeGb: 50,
-        loadAverage: 0.1,
-        lastSeen: new Date(Date.now() - 1000 * 60 * 60).toISOString(),
-        freshnessSeconds: Math.floor(60 * 60),
-        isFresh: false,
-      },
-    ]
-    return res.json({ agents: fallback, warning: `Failed to read registry at ${registryPath}: ${String(e && e.message ? e.message : e)}` })
+    const useFixtures = process.env.NODE_ENV === 'test' || (process.env.TASKBOARD_USE_FIXTURES || '').toString().toLowerCase() === 'true';
+    if (useFixtures) {
+      const fallback = [
+        {
+          agentId: 'ofbiz-dev-01',
+          hostname: 'ubuntu-16gb-sin-1',
+          roles: ['ofbiz'],
+          status: 'idle',
+          cpuCount: 8,
+          memoryGb: 15.2425,
+          diskFreeGb: 272.77,
+          loadAverage: 3.36,
+          lastSeen: new Date().toISOString(),
+          freshnessSeconds: 0,
+          isFresh: true,
+        },
+        {
+          agentId: 'future-agent-placeholder',
+          hostname: 'another-server',
+          roles: ['general'],
+          status: 'idle',
+          cpuCount: 2,
+          memoryGb: 4,
+          diskFreeGb: 50,
+          loadAverage: 0.1,
+          lastSeen: new Date(Date.now() - 1000 * 60 * 60).toISOString(),
+          freshnessSeconds: Math.floor(60 * 60),
+          isFresh: false,
+        },
+      ]
+      return res.json({ agents: fallback, warning: `Failed to read registry at ${registryPath}: ${String(e && e.message ? e.message : e)}` })
+    }
+    return res.json({ agents: [], warning: `Failed to read registry at ${registryPath}: ${String(e && e.message ? e.message : e)}` })
   }
 })
 
@@ -784,18 +844,9 @@ app.get('/taskboard/api/followups', (req, res) => {
 // Follow-ups manual actions: approve, reject, publish
 app.post('/taskboard/api/followups/:id/approve', (req, res) => {
   try {
-    const serverToken = process.env.TASKBOARD_API_TOKEN;
-    if (!serverToken) {
-      return res.status(500).json({ error: 'Server misconfiguration: TASKBOARD_API_TOKEN not set' });
-    }
-    const authHeader = req.headers.authorization || req.headers.Authorization || '';
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      return res.status(401).json({ error: 'Missing Authorization header' });
-    }
-    const provided = authHeader.slice('Bearer '.length).trim();
-    if (provided !== serverToken) {
-      return res.status(403).json({ error: 'Invalid token' });
-    }
+    const auth = requireBearerAuth(req, res);
+    if (!auth) return;
+    const provided = auth.provided;
 
     const suggestionId = req.params.id;
     if (!suggestionId) return res.status(400).json({ error: 'Missing suggestion id' });
@@ -835,18 +886,9 @@ except Exception as e:
 
 app.post('/taskboard/api/followups/:id/reject', (req, res) => {
   try {
-    const serverToken = process.env.TASKBOARD_API_TOKEN;
-    if (!serverToken) {
-      return res.status(500).json({ error: 'Server misconfiguration: TASKBOARD_API_TOKEN not set' });
-    }
-    const authHeader = req.headers.authorization || req.headers.Authorization || '';
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      return res.status(401).json({ error: 'Missing Authorization header' });
-    }
-    const provided = authHeader.slice('Bearer '.length).trim();
-    if (provided !== serverToken) {
-      return res.status(403).json({ error: 'Invalid token' });
-    }
+    const auth = requireBearerAuth(req, res);
+    if (!auth) return;
+    const provided = auth.provided;
 
     const suggestionId = req.params.id;
     if (!suggestionId) return res.status(400).json({ error: 'Missing suggestion id' });
@@ -886,18 +928,9 @@ except Exception as e:
 
 app.post('/taskboard/api/followups/:id/publish', (req, res) => {
   try {
-    const serverToken = process.env.TASKBOARD_API_TOKEN;
-    if (!serverToken) {
-      return res.status(500).json({ error: 'Server misconfiguration: TASKBOARD_API_TOKEN not set' });
-    }
-    const authHeader = req.headers.authorization || req.headers.Authorization || '';
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      return res.status(401).json({ error: 'Missing Authorization header' });
-    }
-    const provided = authHeader.slice('Bearer '.length).trim();
-    if (provided !== serverToken) {
-      return res.status(403).json({ error: 'Invalid token' });
-    }
+    const auth = requireBearerAuth(req, res);
+    if (!auth) return;
+    const provided = auth.provided;
 
     const suggestionId = req.params.id;
     if (!suggestionId) return res.status(400).json({ error: 'Missing suggestion id' });
@@ -983,36 +1016,40 @@ app.get('/taskboard/api/agents', (req, res) => {
     return res.json({ agents })
   } catch (e) {
     console.warn('Failed to read agent registry', e && e.message ? e.message : e)
-    const fallback = [
-      {
-        agentId: 'ofbiz-dev-01',
-        hostname: 'ubuntu-16gb-sin-1',
-        roles: ['ofbiz'],
-        status: 'idle',
-        cpuCount: 8,
-        memoryGb: 15.2425,
-        diskFreeGb: 272.77,
-        loadAverage: 3.36,
-        lastSeen: new Date().toISOString(),
-        freshnessSeconds: 0,
-        isFresh: true,
+    const useFixtures = process.env.NODE_ENV === 'test' || (process.env.TASKBOARD_USE_FIXTURES || '').toString().toLowerCase() === 'true';
+    if (useFixtures) {
+      const fallback = [
+        {
+          agentId: 'ofbiz-dev-01',
+          hostname: 'ubuntu-16gb-sin-1',
+          roles: ['ofbiz'],
+          status: 'idle',
+          cpuCount: 8,
+          memoryGb: 15.2425,
+          diskFreeGb: 272.77,
+          loadAverage: 3.36,
+          lastSeen: new Date().toISOString(),
+          freshnessSeconds: 0,
+          isFresh: true,
 
-      },
-      {
-        agentId: 'future-agent-placeholder',
-        hostname: 'another-server',
-        roles: ['general'],
-        status: 'idle',
-        cpuCount: 2,
-        memoryGb: 4,
-        diskFreeGb: 50,
-        loadAverage: 0.1,
-        lastSeen: new Date(Date.now() - 1000 * 60 * 60).toISOString(),
-        freshnessSeconds: Math.floor(60 * 60),
-        isFresh: false,
-      },
-    ]
-    return res.json({ agents: fallback, warning: `Failed to read registry at ${registryPath}: ${String(e && e.message ? e.message : e)}` })
+        },
+        {
+          agentId: 'future-agent-placeholder',
+          hostname: 'another-server',
+          roles: ['general'],
+          status: 'idle',
+          cpuCount: 2,
+          memoryGb: 4,
+          diskFreeGb: 50,
+          loadAverage: 0.1,
+          lastSeen: new Date(Date.now() - 1000 * 60 * 60).toISOString(),
+          freshnessSeconds: Math.floor(60 * 60),
+          isFresh: false,
+        },
+      ]
+      return res.json({ agents: fallback, warning: `Failed to read registry at ${registryPath}: ${String(e && e.message ? e.message : e)}` })
+    }
+    return res.json({ agents: [], warning: `Failed to read registry at ${registryPath}: ${String(e && e.message ? e.message : e)}` })
   }
 })
 
@@ -1024,19 +1061,9 @@ app.get('/taskboard/api/agents', (req, res) => {
 app.post('/taskboard/api/task/decision', async (req, res) => {
     console.log('[SSE-DEBUG] /taskboard/api/task/decision invoked - method:', req.method, 'path:', req.path, 'auth:', !!(req.headers && (req.headers.authorization || req.headers.Authorization)));
   try {
-    const serverToken = process.env.TASKBOARD_API_TOKEN;
-    if (!serverToken) {
-      return res.status(500).json({ error: 'Server misconfiguration: TASKBOARD_API_TOKEN not set' });
-    }
-
-    const authHeader = req.headers.authorization || req.headers.Authorization || '';
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      return res.status(401).json({ error: 'Missing Authorization header' });
-    }
-    const provided = authHeader.slice('Bearer '.length).trim();
-    if (provided !== serverToken) {
-      return res.status(403).json({ error: 'Invalid token' });
-    }
+    const auth = requireBearerAuth(req, res);
+    if (!auth) return;
+    const provided = auth.provided;
 
     const body = req.body || {};
     const taskId = body.taskId;
