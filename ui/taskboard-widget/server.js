@@ -48,18 +48,28 @@ function requireBearerAuth(req, res) {
 }
 
 // Ensure child processes inherit the resolved TASKBOARD_API_TOKEN so python helper scripts
-// receive it even when spawned with a copy of process.env.
+// receive it even when spawned with a copy of process.env. We avoid logging sensitive values.
 (function propagateServerTokenToEnv() {
   try {
     const resolved = getServerToken();
     if (resolved) {
       process.env.TASKBOARD_API_TOKEN = resolved;
-      console.log('[CONFIG] TASKBOARD_API_TOKEN loaded into process.env');
+      console.log('[CONFIG] auth configuration loaded');
     }
   } catch (e) {
     // non-fatal
   }
 })();
+
+// Helper: produce a child environment cleaned of sensitive values by default.
+function childEnv(allowToken = false) {
+  const env = Object.assign({}, process.env);
+  if (!allowToken) {
+    try { delete env.TASKBOARD_API_TOKEN; } catch (e) {}
+  }
+  return env;
+}
+
 
 
 // Trace incoming requests for debugging streaming/fetch behavior
@@ -864,7 +874,7 @@ except Exception as e:
     sys.exit(2)
 `;
 
-    const env = Object.assign({}, process.env);
+    const env = childEnv(false);
     env.PYTHONPATH = path.resolve(__dirname, '..', '..');
     const proc = spawnSync('python3', ['-c', pythonCode], { input: JSON.stringify({ suggestionId }), encoding: 'utf8', env: env, timeout: 30000 });
     const out = (proc.stdout || '').trim();
@@ -906,7 +916,7 @@ except Exception as e:
     sys.exit(2)
 `;
 
-    const env = Object.assign({}, process.env);
+    const env = childEnv(false);
     env.PYTHONPATH = path.resolve(__dirname, '..', '..');
     const proc = spawnSync('python3', ['-c', pythonCode], { input: JSON.stringify({ suggestionId }), encoding: 'utf8', env: env, timeout: 30000 });
     const out = (proc.stdout || '').trim();
@@ -956,7 +966,7 @@ if not ok:
     sys.exit(2)
 `;
 
-    const env = Object.assign({}, process.env);
+    const env = childEnv(false);
     env.PYTHONPATH = path.resolve(__dirname, '..', '..');
     const proc = spawnSync('python3', ['-c', pythonCode], { input: JSON.stringify({ suggestionId }), encoding: 'utf8', env: env, timeout: 60000 });
     const out = (proc.stdout || '').trim();
@@ -1156,7 +1166,7 @@ app.post('/taskboard/api/task/decision', async (req, res) => {
             const args = ['--bootstrap-server', process.env.KAFKA_BOOTSTRAP || 'localhost:9092', '--topic', topic];
             if (clientConfig) args.push('--producer.config', clientConfig);
             try {
-              const proc = spawnSync(producer, args, { input: JSON.stringify(review_msg) + '\n', encoding: 'utf8', timeout: 30000, env: process.env });
+              const proc = spawnSync(producer, args, { input: JSON.stringify(review_msg) + '\n', encoding: 'utf8', timeout: 30000, env: childEnv(false) });
               const meta = { topic, returnCode: proc.status, stdout: (proc.stdout || '').slice(-4000), stderr: (proc.stderr || '').slice(-4000), used_cli: true, cmd: [producer].concat(args) };
               if (proc.status === 0) {
                 console.log('[SSE-DEBUG] async publish ok', meta);
@@ -1172,7 +1182,7 @@ app.post('/taskboard/api/task/decision', async (req, res) => {
         // Fallback: attempt to use Python matrix_bridge.kafka_client (respects KAFKA_CLIENT_CONFIG)
         try {
           const pythonCode = `import json, sys\nfrom matrix_bridge.kafka_client import KafkaClient\nkc = KafkaClient(dry_run=False)\nmsg = json.loads(sys.stdin.read())\nsuccess, meta = kc.publish('${topic}', msg)\nprint(json.dumps({'success': success, 'meta': meta}))\nif not success:\n    sys.exit(2)\n`;
-          const env = Object.assign({}, process.env);
+          const env = childEnv(false);
           // Ensure Python can import matrix_bridge from repo root
           env.PYTHONPATH = path.resolve(__dirname, '..', '..');
           const py = spawnSync('python3', ['-c', pythonCode], { input: JSON.stringify(review_msg), encoding: 'utf8', env: env, timeout: 30000 });
