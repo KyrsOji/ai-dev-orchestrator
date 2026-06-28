@@ -132,6 +132,65 @@ async function run() {
     if (!oldOnPrior) throw new Error('Previous executionReport lost from prior session');
 
     console.log('TEST PASS: execution attached to active follow-up session and previous preserved');
+
+    // --- Scenario 2: active session already has an executionReport; new runner report replaces it and prior report is moved into executionHistory ---
+    const taskId2 = 'T-attach2-' + Date.now().toString(36);
+    const oldExec2 = { id: 'old-exec2-' + Date.now().toString(36), status: 'completed', summary: 'old run 2', stdout: 'OLD2', createdAt: now };
+    const stored2 = {
+      taskId: taskId2,
+      title: 'Attach test 2',
+      sessions: [
+        {
+          sessionId: 'sess-active',
+          title: 'Active session',
+          createdAt: now,
+          updatedAt: now,
+          messages: [],
+          reviewDecision: { proposals: [] },
+          selectedActionId: null,
+          approval: { value: true, approver: 'tester', approvedAt: now },
+          dispatch: { value: true, dispatchedAt: now },
+          executionReport: oldExec2,
+          artifacts: [],
+          timeline: [],
+          status: 'Complete',
+          immutable: false
+        }
+      ],
+      activeSessionId: 'sess-active',
+      updatedAt: now
+    };
+
+    // Save stored2
+    const saveResp2 = await httpRequest({ method: 'POST', port, path: '/taskboard/api/task/save', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(stored2) });
+    if (!(saveResp2 && saveResp2.statusCode >= 200 && saveResp2.statusCode < 300)) {
+      throw new Error('Failed to save stored task2: ' + JSON.stringify(saveResp2));
+    }
+
+    // Write new runner report for taskId2
+    const runDir2 = path.join(runnerBase, taskId2);
+    fs.mkdirSync(runDir2, { recursive: true });
+    const newExec2 = { id: 'new-exec2-' + Date.now().toString(36), taskId: taskId2, status: 'completed', summary: 'new run 2', stdout: 'NEW2', createdAt: new Date().toISOString() };
+    fs.writeFileSync(path.join(runDir2, 'execution-report.json'), JSON.stringify(newExec2, null, 2));
+
+    await sleep(400);
+    const listResp2 = await httpRequest({ method: 'GET', port, path: '/taskboard/api/tasks' });
+    if (listResp2.statusCode !== 200) throw new Error('GET tasks failed (2): ' + listResp2.statusCode);
+    const arr2 = JSON.parse(listResp2.body || '[]');
+    const found2 = arr2.find(t => t && t.taskId === taskId2);
+    if (!found2) throw new Error('Task2 not found in merged tasks');
+
+    const activeSess = (found2.sessions || []).find(s => s && s.sessionId === 'sess-active');
+    if (!activeSess) throw new Error('Active session missing for task2');
+    if (!activeSess.executionReport || activeSess.executionReport.id !== newExec2.id) throw new Error('New executionReport not attached to active session (task2)');
+
+    // Ensure previous executionReport is now present in executionHistory
+    if (!Array.isArray(found2.executionHistory) || !found2.executionHistory.find(h => h && h.id === oldExec2.id)) {
+      throw new Error('Previous executionReport was not preserved in executionHistory for task2');
+    }
+
+    console.log('TEST PASS: active session replaced and previous executionReport preserved in executionHistory');
+
   } finally {
     server.kill();
     await sleep(200);
