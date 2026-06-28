@@ -55,7 +55,11 @@ async function run() {
 
   const browser = await chromium.launch();
   try {
-    const context = await browser.newContext({ viewport: { width: 1024, height: 768 } });
+    const vp = process.env.VIEWPORT || 'desktop'
+    let viewport = { width: 1024, height: 768 }
+    if (vp === 'tablet') viewport = { width: 768, height: 1024 }
+    else if (vp === 'mobile') viewport = { width: 375, height: 812 }
+    const context = await browser.newContext({ viewport }) ;
     const page = await context.newPage();
     // Forward page console logs to the test runner stdout for debugging
     page.on('console', (msg) => {
